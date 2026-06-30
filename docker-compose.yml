@@ -1,0 +1,31 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./sample-data:/data/csv:ro
+      - ./backend:/app/backend
+    environment:
+      - CSV_BASE_PATH=/data/csv
+      - CSV_REFRESH_INTERVAL_SECONDS=900
+      - LOG_LEVEL=INFO
+      - ALLOWED_ORIGINS=["http://localhost:5173"]
+    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    depends_on:
+      - backend

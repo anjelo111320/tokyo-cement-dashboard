@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+
+    <!-- Viewport with viewport-fit=cover for fullscreen safe area support -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+
+    <!-- PWA manifest -->
+    <link rel="manifest" href="/manifest.json" />
+
+    <!-- Theme colour (colours the status bar on Android Chrome) -->
+    <meta name="theme-color" content="#0D1F2D" />
+
+    <!-- iOS fullscreen PWA -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Tokyo Cement" />
+
+    <!-- Icons -->
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" sizes="192x192" href="/icon-192.png" />
+
+    <!-- SEO / description -->
+    <meta name="description" content="Tokyo Cement Analytics Dashboard — inventory, plant, and ledger monitoring." />
+    <meta name="application-name" content="Tokyo Cement" />
+
+    <title>Tokyo Cement Analytics</title>
+
+    <!-- GitHub Pages SPA routing — decodes path redirected from 404.html -->
+    <script>
+      (function() {
+        var p = window.location.search.match(/[?&]p=([^&]*)/);
+        if (p) {
+          var q = window.location.search.match(/[?&]q=([^&]*)/);
+          window.history.replaceState(
+            null, null,
+            window.location.pathname.split('/').slice(0, -1).join('/') + '/' +
+            p[1].replace(/~and~/g, '&') +
+            (q ? '?' + q[1].replace(/~and~/g, '&') : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

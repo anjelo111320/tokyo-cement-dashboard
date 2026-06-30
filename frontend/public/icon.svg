@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Background rounded rect -->
+  <rect width="512" height="512" rx="112" fill="#0D1F2D"/>
+
+  <!-- Factory building body -->
+  <rect x="96" y="270" width="320" height="170" rx="8" fill="#1B3550"/>
+
+  <!-- Roof triangle -->
+  <polygon points="256,130 80,270 432,270" fill="#1B3550"/>
+
+  <!-- Accent stripe on roof -->
+  <polygon points="256,155 105,270 407,270" fill="#1D4E6B"/>
+
+  <!-- Windows row 1 -->
+  <rect x="136" y="295" width="55" height="45" rx="6" fill="#E05540"/>
+  <rect x="228" y="295" width="55" height="45" rx="6" fill="#E05540"/>
+  <rect x="320" y="295" width="55" height="45" rx="6" fill="#E05540"/>
+
+  <!-- Door -->
+  <rect x="211" y="358" width="90" height="82" rx="6" fill="#0D1F2D"/>
+
+  <!-- Chimney left -->
+  <rect x="145" y="185" width="36" height="90" rx="6" fill="#2E6B8A"/>
+  <!-- Chimney smoke dot -->
+  <circle cx="163" cy="168" r="16" fill="#3D8BAD" opacity="0.7"/>
+  <circle cx="163" cy="148" r="11" fill="#5BA5C2" opacity="0.5"/>
+
+  <!-- Chimney right -->
+  <rect x="330" y="205" width="36" height="70" rx="6" fill="#2E6B8A"/>
+  <circle cx="348" cy="188" r="13" fill="#3D8BAD" opacity="0.7"/>
+</svg>
