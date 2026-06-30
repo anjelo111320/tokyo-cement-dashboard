@@ -46,8 +46,12 @@ class Settings(BaseSettings):
 
     # ── CORS ──────────────────────────────────────────────────────────────────
     # Which frontend origins are allowed to call this API.
-    # Add your deployed Vercel URL here in production.
-    allowed_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
+    # Set as comma-separated string in env: ALLOWED_ORIGINS=https://app.vercel.app,http://localhost:5173
+    allowed_origins_str: str = "http://localhost:5173,http://localhost:3000"
+
+    @property
+    def allowed_origins(self) -> list[str]:
+        return [o.strip() for o in self.allowed_origins_str.split(",")]
 
     # ── Logging ───────────────────────────────────────────────────────────────
     # Standard Python log level: DEBUG, INFO, WARNING, ERROR, CRITICAL.
