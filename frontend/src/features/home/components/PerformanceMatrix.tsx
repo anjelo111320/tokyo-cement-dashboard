@@ -178,7 +178,7 @@ export function PerformanceMatrix() {
                   position: 'right',
                   fontSize: 10,
                   fontWeight: 600,
-                  formatter: (v: number) => `${formatNumber(v, 1)}%  ${tierLabel(v)}`,
+                  formatter: (v: unknown) => `${formatNumber(Number(v), 1)}%  ${tierLabel(Number(v))}`,
                   fill: '#374151',
                 }}
               >

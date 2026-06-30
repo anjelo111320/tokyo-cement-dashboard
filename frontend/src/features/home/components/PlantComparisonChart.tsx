@@ -119,9 +119,9 @@ export function PlantComparisonChart() {
 
             <Tooltip
               contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e5e7eb' }}
-              formatter={(value: unknown, name: string) => [
+              formatter={(value: unknown, name: unknown) => [
                 `${formatNumber(value as number, 3)} ${unit}`,
-                name,
+                String(name),
               ]}
               labelFormatter={(label) => {
                 const plant = chartData.find((p) => p.name === label);
@@ -137,17 +137,17 @@ export function PlantComparisonChart() {
                 />
                 <Bar dataKey="opening" name="opening" fill="#3D8BAD" radius={[0, 3, 3, 0]}
                   label={{ position: 'right', fontSize: 9, fill: '#6b7280',
-                    formatter: (v: number) => v > 0 ? formatNumber(v, 1) : '' }} />
+                    formatter: (v: unknown) => Number(v) > 0 ? formatNumber(Number(v), 1) : '' }} />
                 <Bar dataKey="closing" name="closing" fill="#1B3550" radius={[0, 3, 3, 0]}
                   label={{ position: 'right', fontSize: 9, fill: '#6b7280',
-                    formatter: (v: number) => v > 0 ? formatNumber(v, 1) : '' }} />
+                    formatter: (v: unknown) => Number(v) > 0 ? formatNumber(Number(v), 1) : '' }} />
               </>
             )}
 
             {metric === 'receipts' && (
               <Bar dataKey="receipts" name="Receipts (ZU)" radius={[0, 3, 3, 0]}
                 label={{ position: 'right', fontSize: 9, fill: '#6b7280',
-                  formatter: (v: number) => v > 0 ? formatNumber(v, 1) : '' }}>
+                  formatter: (v: unknown) => Number(v) > 0 ? formatNumber(Number(v), 1) : '' }}>
                 {chartData.map((_, i) => (
                   <Cell key={i} fill="#22C55E" />
                 ))}
@@ -157,7 +157,7 @@ export function PlantComparisonChart() {
             {metric === 'consumption' && (
               <Bar dataKey="consumption" name="Consumption (VN)" radius={[0, 3, 3, 0]}
                 label={{ position: 'right', fontSize: 9, fill: '#6b7280',
-                  formatter: (v: number) => v > 0 ? formatNumber(v, 1) : '' }}>
+                  formatter: (v: unknown) => Number(v) > 0 ? formatNumber(Number(v), 1) : '' }}>
                 {chartData.map((_, i) => (
                   <Cell key={i} fill="#E05540" />
                 ))}
