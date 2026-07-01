@@ -5,7 +5,6 @@
 
 import { useMemo } from 'react';
 import { TrendingDown, TrendingUp } from 'lucide-react';
-import { cn } from '@/utils/cn';
 import { Skeleton } from '@/components/common/LoadingSkeleton';
 import { useLedgerTransfers } from '@/features/material_ledger/hooks/useLedger';
 

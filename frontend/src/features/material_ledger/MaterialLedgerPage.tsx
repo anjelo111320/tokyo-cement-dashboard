@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { ArrowRight, PackageCheck, PackageX, Search, X, ChevronUp, ChevronDown, Package, Truck, Warehouse, ReceiptText } from 'lucide-react';
 import { PageHeader }        from '@/components/common/PageHeader';
 import { cn }                from '@/utils/cn';
-import { useLedgerTransfers, useLedgerPlants } from './hooks/useLedger';
+import { useLedgerTransfers } from './hooks/useLedger';
 import type { StockTransferRow } from '@/types/material_ledger.types';
 
 // ── Filter state ──────────────────────────────────────────────────────────────
@@ -200,7 +200,6 @@ function TransferDetailModal({
 
 export function MaterialLedgerPage() {
   const { data: transferData, isLoading } = useLedgerTransfers();
-  const { data: plants = [] }             = useLedgerPlants();
 
   const transfers: StockTransferRow[] = transferData?.transfers ?? [];
 
