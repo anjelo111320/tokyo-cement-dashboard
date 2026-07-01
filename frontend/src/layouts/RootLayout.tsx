@@ -3,13 +3,11 @@ import { Outlet } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { BottomNav } from './BottomNav';
 import { TopBar } from './TopBar';
-import { config } from '@/constants/config';
-
 const PING_INTERVAL_MS = 14 * 60 * 1000; // 14 min — keeps Render free tier awake
 
 export function RootLayout() {
   useEffect(() => {
-    const ping = () => fetch(`${config.apiBaseUrl}/health`).catch(() => {});
+    const ping = () => fetch('/api/v1/health').catch(() => {});
     ping();
     const id = setInterval(ping, PING_INTERVAL_MS);
     return () => clearInterval(id);
