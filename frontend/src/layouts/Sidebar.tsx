@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Map, BookOpen, Factory, RefreshCw } from 'lucide-react';
+import { LayoutDashboard, Map, FileBarChart2, RefreshCw, Settings } from 'lucide-react';
 import { ROUTES } from '@/constants/routes';
 import { useSidebar } from '@/contexts/SidebarContext';
 import { useIsMobile } from '@/hooks/useMediaQuery';
@@ -7,9 +7,10 @@ import { cn } from '@/utils/cn';
 import { useDataRefresh } from '@/hooks/useDataRefresh';
 
 const NAV_ITEMS = [
-  { to: ROUTES.HOME,   icon: LayoutDashboard, label: 'Dashboard' },
-  { to: ROUTES.MAP,    icon: Map,             label: 'Plant Map' },
-  { to: ROUTES.LEDGER, icon: BookOpen,        label: 'Material Ledger' },
+  { to: ROUTES.HOME,     icon: LayoutDashboard, label: 'Dashboard' },
+  { to: ROUTES.MAP,      icon: Map,             label: 'Plant Map' },
+  { to: ROUTES.LEDGER,   icon: FileBarChart2,   label: 'Report' },
+  { to: ROUTES.SETTINGS, icon: Settings,        label: 'Settings' },
 ];
 
 export function Sidebar() {
@@ -29,14 +30,9 @@ export function Sidebar() {
         aria-label="Main navigation"
       >
         {/* Logo */}
-        <div className="flex items-center gap-2.5 px-6 py-5 border-b border-[#1B3550]">
-          <div className="w-8 h-8 bg-accent-500 rounded-lg flex items-center justify-center">
-            <Factory size={18} className="text-white" />
-          </div>
-          <div>
-            <p className="text-white font-bold text-sm leading-tight">Tokyo Cement</p>
-            <p className="text-[#5BA5C2] text-[10px] leading-tight">Analytics Platform</p>
-          </div>
+        <div className="px-5 py-4 border-b border-[#1B3550]">
+          <img src="/insee-logo.png" alt="INSEE" className="h-7 w-auto" />
+          <p className="text-[#5BA5C2] text-[9px] mt-2 font-semibold tracking-widest uppercase">Analytics Platform</p>
         </div>
 
         {/* Nav items */}

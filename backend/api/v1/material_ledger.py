@@ -4,13 +4,13 @@ api/v1/material_ledger.py — Material Ledger Endpoints
 Thin route handlers — all business logic is in MaterialLedgerService.
 
 Endpoints:
-  GET /api/v1/material-ledger/kpis             → KPI cards
-  GET /api/v1/material-ledger/inventory-flow   → AB→ZU→KB→VN→EB waterfall
-  GET /api/v1/material-ledger/consumption      → consumption breakdown by proc cat
-  GET /api/v1/material-ledger/supply-chain     → factory→depot flow
-  GET /api/v1/material-ledger/movements        → paginated raw movement table
-  GET /api/v1/material-ledger/materials        → distinct materials (filter dropdown)
-  GET /api/v1/material-ledger/plants           → all plants with GPS coords
+  GET /api/v1/material-ledger/kpis               → KPI cards
+  GET /api/v1/material-ledger/movements          → paginated raw movement table
+  GET /api/v1/material-ledger/inventory-summary  → per-plant on-hand + transit
+  GET /api/v1/material-ledger/inventory-alerts   → low-stock alerts
+  GET /api/v1/material-ledger/stock-transfers    → inter-plant transfer rows
+  GET /api/v1/material-ledger/materials          → distinct materials (filter dropdown)
+  GET /api/v1/material-ledger/plants             → all plants with GPS coords
 """
 
 import math
@@ -19,9 +19,8 @@ from fastapi import APIRouter, Query
 
 from backend.schemas.common import ApiResponse, PaginatedResponse, Pagination, ApiMeta
 from backend.schemas.material_ledger import (
-    LedgerKpiSchema, InventoryFlowSchema, ConsumptionBreakdownSchema,
-    SupplyChainSchema, MovementRowSchema, MaterialSchema, PlantSchema,
-    StockTransferSchema, PlantComparisonSchema,
+    LedgerKpiSchema, MovementRowSchema, MaterialSchema, PlantSchema,
+    StockTransferSchema, InventorySummarySchema, InventoryAlertsSchema,
 )
 from backend.services.material_ledger_service import MaterialLedgerService
 
@@ -36,35 +35,6 @@ async def get_kpis(
 ):
     """Opening stock, closing stock, total receipts, total consumption."""
     return ApiResponse(data=_svc.get_kpis(plant_id=plant_id, material_id=material_id))
-
-
-@router.get("/inventory-flow", response_model=ApiResponse[InventoryFlowSchema])
-async def get_inventory_flow(
-    plant_id: Optional[str] = Query(None),
-    material_id: Optional[str] = Query(None),
-):
-    """
-    Waterfall chart data: Beginning → Receipts → Cumulative → Consumption → Ending.
-    Categories are driven by material_ledger_config.py — safe to add new codes.
-    """
-    return ApiResponse(data=_svc.get_inventory_flow(plant_id=plant_id, material_id=material_id))
-
-
-@router.get("/consumption", response_model=ApiResponse[ConsumptionBreakdownSchema])
-async def get_consumption_breakdown(
-    plant_id: Optional[str] = Query(None),
-    material_id: Optional[str] = Query(None),
-):
-    """Sales Orders vs Internal Consumption vs Stock Transfer breakdown."""
-    return ApiResponse(data=_svc.get_consumption_breakdown(plant_id=plant_id, material_id=material_id))
-
-
-@router.get("/supply-chain", response_model=ApiResponse[SupplyChainSchema])
-async def get_supply_chain(
-    material_id: Optional[str] = Query(None),
-):
-    """Factory → Depot supply chain flow with production and transfer volumes."""
-    return ApiResponse(data=_svc.get_supply_chain(material_id=material_id))
 
 
 @router.get("/movements", response_model=PaginatedResponse[MovementRowSchema])
@@ -92,12 +62,23 @@ async def get_movements(
     )
 
 
-@router.get("/plant-comparison", response_model=ApiResponse[PlantComparisonSchema])
-async def get_plant_comparison(
-    material_id: Optional[str] = Query(None),
+@router.get("/inventory-summary", response_model=ApiResponse[InventorySummarySchema])
+async def get_inventory_summary(
+    material_ids: Optional[str] = Query(None, description="Comma-separated material IDs"),
+    plant_id:     list[str]     = Query(default=[], description="Plant IDs to filter (repeatable)"),
 ):
-    """Per-plant comparison: opening / receipts / consumption / closing (CA rows only)."""
-    return ApiResponse(data=_svc.get_plant_comparison(material_id=material_id))
+    """Per-plant inventory: on-hand, in-transit out/in, and alert status."""
+    mid_list = [m.strip() for m in material_ids.split(",")] if material_ids else None
+    return ApiResponse(data=_svc.get_inventory_summary(material_ids=mid_list, plant_ids=plant_id or None))
+
+
+@router.get("/inventory-alerts", response_model=ApiResponse[InventoryAlertsSchema])
+async def get_inventory_alerts(
+    material_ids: Optional[str] = Query(None, description="Comma-separated material IDs"),
+):
+    """Plants where on-hand stock is below the configured minimum threshold."""
+    mid_list = [m.strip() for m in material_ids.split(",")] if material_ids else None
+    return ApiResponse(data=_svc.get_inventory_alerts(material_ids=mid_list))
 
 
 @router.get("/stock-transfers", response_model=ApiResponse[StockTransferSchema])
@@ -110,9 +91,11 @@ async def get_stock_transfers(
 
 
 @router.get("/materials", response_model=ApiResponse[list[MaterialSchema]])
-async def get_materials():
-    """Distinct materials for the filter dropdown."""
-    return ApiResponse(data=_svc.get_materials())
+async def get_materials(
+    plant_id: list[str] = Query(default=[], description="Plant IDs to filter (repeatable)"),
+):
+    """Distinct materials for the filter dropdown, scoped to selected plants."""
+    return ApiResponse(data=_svc.get_materials(plant_ids=plant_id or None))
 
 
 @router.get("/plants", response_model=ApiResponse[list[PlantSchema]])

@@ -7,6 +7,7 @@ import { Skeleton } from '@/components/common/LoadingSkeleton';
 const HomePage           = lazy(() => import('@/features/home/HomePage').then((m) => ({ default: m.HomePage })));
 const MapPage            = lazy(() => import('@/features/map/MapPage').then((m) => ({ default: m.MapPage })));
 const MaterialLedgerPage = lazy(() => import('@/features/material_ledger/MaterialLedgerPage').then((m) => ({ default: m.MaterialLedgerPage })));
+const SettingsPage       = lazy(() => import('@/features/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })));
 
 function PageLoader() {
   return (
@@ -36,6 +37,10 @@ const router = createBrowserRouter([
       {
         path: ROUTES.LEDGER,
         element: <Suspense fallback={<PageLoader />}><MaterialLedgerPage /></Suspense>,
+      },
+      {
+        path: ROUTES.SETTINGS,
+        element: <Suspense fallback={<PageLoader />}><SettingsPage /></Suspense>,
       },
     ],
   },

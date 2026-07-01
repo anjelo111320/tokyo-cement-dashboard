@@ -25,7 +25,7 @@ Depends on:
 """
 
 import uuid
-from fastapi import APIRouter
+from fastapi import APIRouter, Body
 from backend.schemas.common import ApiResponse
 from backend.schemas.settings import (
     CsvConfigSchema,
@@ -33,8 +33,12 @@ from backend.schemas.settings import (
     CsvConfigUpdateRequest,
     IngestionJobResponse,
 )
+from backend.schemas.material_ledger import MaterialThresholdSchema
 from backend.core.config import settings as app_settings
 from backend.repositories.csv.csv_base import csv_cache, CSV_FILES
+from backend.services.material_ledger_service import MaterialLedgerService
+
+_svc = MaterialLedgerService()
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -95,3 +99,21 @@ async def trigger_ingestion():
         message="CSV files reloaded successfully",
     )
     return ApiResponse(data=data)
+
+
+@router.get("/thresholds", response_model=ApiResponse[list[MaterialThresholdSchema]])
+async def get_thresholds():
+    """Returns all configured low-stock alert thresholds."""
+    return ApiResponse(data=_svc.get_material_thresholds())
+
+
+@router.post("/thresholds", response_model=ApiResponse[list[MaterialThresholdSchema]])
+async def set_threshold(
+    material_id:  str   = Body(..., embed=True),
+    min_stock_mt: float = Body(..., embed=True),
+):
+    """Sets or removes a low-stock threshold for a material.
+    Pass min_stock_mt=0 to remove the alert for that material.
+    """
+    _svc.set_material_threshold(material_id=material_id, min_stock_mt=min_stock_mt)
+    return ApiResponse(data=_svc.get_material_thresholds())

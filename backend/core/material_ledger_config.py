@@ -150,3 +150,12 @@ OUTFLOW_CATEGORIES: list[str] = ["VN"]
 # The "physical stock" category (used for ending balance KPI)
 CLOSING_CATEGORY: str = "EB"
 OPENING_CATEGORY: str = "AB"
+
+# ── Low-stock alert thresholds ─────────────────────────────────────────────────
+# Maps material_id (string) → minimum on-hand stock in MT.
+# Plants whose closing stock (EB) falls below this value will appear in alerts.
+# A threshold of 0 means no alert for that material.
+# Update via POST /api/v1/settings/thresholds at runtime — no restart needed.
+MATERIAL_THRESHOLDS: dict[str, float] = {
+    # "80300000008": 5.0,
+}

@@ -18,37 +18,6 @@ export interface LedgerKpi {
   unit:                  string;
 }
 
-export interface CategoryFlowRow {
-  category_code:   string;
-  label:           string;
-  quantity:        number;
-  total_price_lkr: number | null;
-  sign:            number;     // +1 adds, -1 reduces
-  color:           string;
-  role:            string;     // opening | inflow | summary | outflow | closing | unknown
-  unit:            string;
-}
-
-export interface InventoryFlow {
-  rows: CategoryFlowRow[];
-  unit: string;
-}
-
-
-export interface ConsumptionCategory {
-  proc_cat: string;
-  label:    string;
-  quantity: number;
-  pct:      number;
-  unit:     string;
-}
-
-export interface ConsumptionBreakdown {
-  total_consumption_mt: number;
-  categories:           ConsumptionCategory[];
-  unit:                 string;
-}
-
 export interface MovementRow {
   plant_id:             string;
   material_id:          string;
@@ -68,29 +37,17 @@ export interface MovementRow {
   extra_fields:         Record<string, unknown>;
 }
 
-export interface PlantComparisonRow {
-  plant_id:       string;
-  plant_name:     string;
-  city:           string | null;
-  opening_mt:     number;
-  receipts_mt:    number;
-  consumption_mt: number;
-  closing_mt:     number;
-}
-
-export interface PlantComparison {
-  plants: PlantComparisonRow[];
-  unit:   string;
-}
-
 export interface StockTransferRow {
-  source_plant_id:   string;
-  source_plant_name: string;
-  dest_plant_id:     string;
-  dest_plant_name:   string;
-  quantity:          number;
-  price_lkr:         number | null;
-  unit:              string;
+  source_plant_id:      string;
+  source_plant_name:    string;
+  dest_plant_id:        string;
+  dest_plant_name:      string;
+  material_id:          string;
+  material_description: string;
+  quantity:             number;
+  dest_closing_stock:   number;
+  price_lkr:            number | null;
+  unit:                 string;
 }
 
 export interface StockTransfer {
@@ -101,6 +58,7 @@ export interface StockTransfer {
 export interface LedgerMaterial {
   material_id:          string;
   material_description: string;
+  closing_stock_mt:     number;
 }
 
 export interface LedgerPlant {
@@ -114,4 +72,48 @@ export interface LedgerPlant {
   latitude:        number | null;
   longitude:       number | null;
   has_ledger_data: boolean;
+}
+
+// ── Inventory dashboard types ─────────────────────────────────────────────────
+
+export interface PlantInventoryRow {
+  plant_id:          string;
+  plant_name:        string;
+  city:              string | null;
+  on_hand_mt:        number;
+  in_transit_out_mt: number;
+  in_transit_in_mt:  number;
+  status:            'ok' | 'low' | 'out';
+}
+
+export interface InventorySummary {
+  rows:                 PlantInventoryRow[];
+  total_on_hand_mt:     number;
+  total_in_transit_out: number;
+  total_in_transit_in:  number;
+  alert_count:          number;
+  unit:                 string;
+}
+
+export interface InventoryAlertRow {
+  plant_id:      string;
+  plant_name:    string;
+  city:          string | null;
+  material_id:   string;
+  material_desc: string;
+  on_hand_mt:    number;
+  threshold_mt:  number;
+  pct:           number;
+  status:        'low' | 'out';
+}
+
+export interface InventoryAlerts {
+  alerts: InventoryAlertRow[];
+  unit:   string;
+}
+
+export interface MaterialThreshold {
+  material_id:   string;
+  material_desc: string;
+  min_stock_mt:  number;
 }

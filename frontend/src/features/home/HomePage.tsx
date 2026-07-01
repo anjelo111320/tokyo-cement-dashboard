@@ -1,109 +1,112 @@
-import { useQuery } from '@tanstack/react-query';
-import {
-  PackageOpen, TrendingUp, TrendingDown, Archive,
-} from 'lucide-react';
-import { queryKeys } from '@/constants/queryKeys';
-import { materialLedgerService } from '@/services/material_ledger.service';
+import { useEffect } from 'react';
+import { formatDateTime } from '@/utils/formatters';
 import { PageHeader } from '@/components/common/PageHeader';
-import { KpiCardSkeleton } from '@/components/common/LoadingSkeleton';
 import { ErrorState } from '@/components/common/ErrorState';
-import { formatNumber, formatDateTime } from '@/utils/formatters';
-import { PlantComparisonChart } from './components/PlantComparisonChart';
-import { PerformanceMatrix } from './components/PerformanceMatrix';
+import {
+  useInventorySummary,
+  useInventoryAlerts,
+  useLedgerMaterials,
+  useLedgerPlants,
+} from '@/features/material_ledger/hooks/useLedger';
+import { useSettingsStore } from '@/hooks/useSettingsStore';
+import { useLocalStorage }  from '@/hooks/useLocalStorage';
+import { MultiMaterialPicker } from './components/MultiMaterialPicker';
+import { MultiPlantPicker }    from './components/MultiPlantPicker';
+import { InventoryKpiCards }   from './components/InventoryKpiCards';
+import { LowStockAlerts }      from './components/LowStockAlerts';
+import { PlantInventoryTable } from './components/PlantInventoryTable';
 
-// ── KPI card ─────────────────────────────────────────────────────────────────
-interface KpiCardProps {
-  title: string;
-  value: string;
-  unit: string;
-  icon: React.ReactNode;
-  accentColor: string;
-  subtitle?: string;
-  trend?: 'up' | 'down' | 'neutral';
-  price?: number | null;
-}
-
-function KpiCard({ title, value, unit, icon, accentColor, subtitle, trend, price }: KpiCardProps) {
-  return (
-    <article className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm hover:shadow-md transition-shadow">
-      <div className="flex items-start justify-between mb-3">
-        <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{title}</p>
-        <div className="w-9 h-9 rounded-lg flex items-center justify-center"
-          style={{ backgroundColor: `${accentColor}1a` }}>
-          <span style={{ color: accentColor }}>{icon}</span>
-        </div>
-      </div>
-      <div className="flex items-end gap-1.5 mb-1">
-        <span className="text-2xl font-bold text-gray-900 leading-none">{value}</span>
-        <span className="text-sm text-gray-500 mb-0.5">{unit}</span>
-        {trend === 'up' && <TrendingUp size={14} className="text-green-500 mb-0.5" />}
-        {trend === 'down' && <TrendingDown size={14} className="text-red-500 mb-0.5" />}
-      </div>
-      {subtitle && <p className="text-xs text-gray-400">{subtitle}</p>}
-      {price != null && (
-        <p className="text-xs text-gray-400 mt-1">Price: {formatNumber(price, 0)}</p>
-      )}
-    </article>
-  );
-}
-
-// ── Main page ─────────────────────────────────────────────────────────────────
 export function HomePage() {
-  const { data: kpis, isLoading: kpisLoading, isError: kpisError } = useQuery({
-    queryKey: queryKeys.ledger.kpis(),
-    queryFn: () => materialLedgerService.getKpis(),
-    staleTime: 5 * 60_000,
-  });
+  const [materialIds, setMaterialIds] = useLocalStorage<string[]>('insee_dashboard_material_ids', []);
+  const [plantIds,    setPlantIds]    = useLocalStorage<string[]>('insee_dashboard_plant_ids',    []);
+
+  const { data: plants    = [] } = useLedgerPlants();
+  const { getUnitScale }          = useSettingsStore();
+
+  const activePlants = plants.filter(p => p.has_ledger_data);
+
+  // Materials scoped to selected plants — re-fetches when plantIds changes
+  const { data: materials = [], isLoading: materialsLoading } = useLedgerMaterials(
+    plantIds.length ? plantIds : undefined,
+  );
+
+  // Auto-clear selected materials that are no longer available at the current plant set.
+  // Guard: skip while materials are still loading — otherwise the empty array would
+  // wipe all restored selections before the fetch completes.
+  useEffect(() => {
+    if (materialsLoading || !materialIds.length) return;
+    const availableIds = new Set(materials.map(m => m.material_id));
+    const stillValid = materialIds.filter(id => availableIds.has(id));
+    if (stillValid.length !== materialIds.length) setMaterialIds(stillValid);
+  }, [materials, materialsLoading]);
+
+  const activeScale = materialIds.length === 1
+    ? getUnitScale(materialIds[0])
+    : { unit: 'MT' as const, bagsPerMt: 1 };
+
+  const {
+    data: summary, isLoading: summaryLoading, isError: summaryError, refetch: refetchSummary,
+  } = useInventorySummary(
+    materialIds.length ? materialIds : undefined,
+    plantIds.length    ? plantIds    : undefined,
+  );
+
+  const { data: alerts } = useInventoryAlerts(materialIds.length ? materialIds : undefined);
 
   return (
     <div className="p-4 lg:p-6 max-w-screen-2xl mx-auto">
       <PageHeader
-        title="Operations Overview"
-        subtitle={`Tokyo Cement — Material Ledger · ${formatDateTime(new Date().toISOString())}`}
+        title="Inventory Dashboard"
+        subtitle={`INSEE — Real-time stock status · ${formatDateTime(new Date().toISOString())}`}
       />
 
-      {/* ── KPI Cards ─────────────────────────────────────────────────────── */}
-      <section className="mb-6" aria-label="Key metrics">
-        {kpisError && <ErrorState message="Failed to load KPIs" />}
-        {kpisLoading ? (
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            {Array.from({ length: 4 }).map((_, i) => <KpiCardSkeleton key={i} />)}
-          </div>
-        ) : kpis && (
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <KpiCard
-              title="Opening Stock" value={formatNumber(kpis.opening_stock_mt, 2)}
-              unit={kpis.unit} icon={<Archive size={18} />} accentColor="#3D8BAD"
-              subtitle="Beginning of period" trend="neutral" price={kpis.opening_price_lkr}
-            />
-            <KpiCard
-              title="Total Receipts" value={formatNumber(kpis.total_receipts_mt, 2)}
-              unit={kpis.unit} icon={<TrendingUp size={18} />} accentColor="#22C55E"
-              subtitle="Produced + received" trend="up" price={kpis.receipts_price_lkr}
-            />
-            <KpiCard
-              title="Total Consumption" value={formatNumber(kpis.total_consumption_mt, 2)}
-              unit={kpis.unit} icon={<TrendingDown size={18} />} accentColor="#E05540"
-              subtitle="Sales + internal use" trend="down" price={kpis.consumption_price_lkr}
-            />
-            <KpiCard
-              title="Closing Stock" value={formatNumber(kpis.closing_stock_mt, 2)}
-              unit={kpis.unit} icon={<PackageOpen size={18} />} accentColor="#1B3550"
-              subtitle="End of period balance" trend="neutral" price={kpis.closing_price_lkr}
-            />
-          </div>
-        )}
+      {/* ── Filter bar ─────────────────────────────────────────────────── */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-4 py-3 mb-5 space-y-3">
+
+        {/* Plant multi-picker */}
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Plants</p>
+          <MultiPlantPicker
+            plants={activePlants}
+            selected={plantIds}
+            onChange={setPlantIds}
+          />
+          {plantIds.length > 0 && materials.length > 0 && (
+            <p className="text-[10px] text-gray-400 mt-1.5">
+              {plantIds.length} plant{plantIds.length !== 1 ? 's' : ''} selected
+              · {materials.length} material{materials.length !== 1 ? 's' : ''} available
+            </p>
+          )}
+        </div>
+
+        <div className="border-t border-gray-100" />
+
+        {/* Material multi-picker — scoped to selected plants */}
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Materials</p>
+          <MultiMaterialPicker
+            materials={materials}
+            selected={materialIds}
+            onChange={setMaterialIds}
+          />
+        </div>
+      </div>
+
+      {/* ── KPI cards ──────────────────────────────────────────────────── */}
+      <section className="mb-5" aria-label="Inventory KPIs">
+        {summaryError && <ErrorState message="Failed to load inventory data" onRetry={refetchSummary} />}
+        <InventoryKpiCards summary={summary} isLoading={summaryLoading} unitScale={activeScale} />
       </section>
 
-      {/* ── Plant Comparison ──────────────────────────────────────────── */}
-      <div className="mb-4">
-        <PlantComparisonChart />
-      </div>
+      {/* ── Low stock alerts ───────────────────────────────────────────── */}
+      {alerts && alerts.alerts.length > 0 && (
+        <div className="mb-5">
+          <LowStockAlerts alerts={alerts} />
+        </div>
+      )}
 
-      {/* ── Performance Matrix ────────────────────────────────────────── */}
-      <div className="mb-4">
-        <PerformanceMatrix />
-      </div>
+      {/* ── Per-plant inventory table ──────────────────────────────────── */}
+      <PlantInventoryTable summary={summary} isLoading={summaryLoading} unitScale={activeScale} />
     </div>
   );
 }

@@ -3,7 +3,7 @@
  *
  * Displays plant identity (Plant ID, Customer Number), full address, a
  * Live Data / No Data pill, and — when ledger data exists — live KPI
- * analytics and a utilization rate progress bar.
+ * analytics and transfer activity (where to where).
  *
  * Drag the handle downward (> 80 px) or tap the backdrop to close.
  */
@@ -11,10 +11,11 @@
 import { useRef, useState, useEffect } from 'react';
 import { X, MapPin } from 'lucide-react';
 import { cn } from '@/utils/cn';
-import { formatNumber, calcUtilization } from '@/utils/formatters';
+import { formatNumber } from '@/utils/formatters';
 import { useLedgerKpis } from '@/features/material_ledger/hooks/useLedger';
 import { Skeleton } from '@/components/common/LoadingSkeleton';
 import { getPlantTypeInfo } from './plantTypeUtils';
+import { PlantTransferActivity } from './PlantTransferActivity';
 import type { LedgerPlant } from '@/types/material_ledger.types';
 
 export type SelectedMapItem = { type: 'plant'; data: LedgerPlant };
@@ -23,12 +24,6 @@ export type SelectedMapItem = { type: 'plant'; data: LedgerPlant };
 function PlantContent({ plant }: { plant: LedgerPlant }) {
   const { Icon, iconColor, iconBg, typeLabel } = getPlantTypeInfo(plant.plant_id);
   const { data: kpis, isLoading: kpisLoading } = useLedgerKpis(plant.plant_id);
-
-  const utilization = calcUtilization(
-    kpis?.opening_stock_mt     ?? 0,
-    kpis?.total_receipts_mt    ?? 0,
-    kpis?.total_consumption_mt ?? 0,
-  );
 
   return (
     <>
@@ -72,7 +67,7 @@ function PlantContent({ plant }: { plant: LedgerPlant }) {
 
       {/* Analytics section — only shown for plants with ledger data */}
       {plant.has_ledger_data && (
-        <div>
+        <div className="mb-4">
           <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Ledger Analytics</p>
 
           {kpisLoading ? (
@@ -101,28 +96,15 @@ function PlantContent({ plant }: { plant: LedgerPlant }) {
                 ))}
               </div>
 
-              {/* Utilization bar — green ≥80%, amber 50–79%, red <50% */}
-              <div className="bg-gray-50 rounded-xl p-3">
-                <div className="flex items-center justify-between mb-1.5">
-                  <p className="text-[10px] text-gray-400">Utilization Rate</p>
-                  <p className="text-xs font-bold" style={{
-                    color: utilization >= 80 ? '#22C55E' : utilization >= 50 ? '#F59E0B' : '#E05540',
-                  }}>
-                    {formatNumber(utilization, 1)}%
-                  </p>
-                </div>
-                <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                  <div className="h-full rounded-full transition-all duration-500"
-                    style={{
-                      width: `${utilization}%`,
-                      backgroundColor: utilization >= 80 ? '#22C55E' : utilization >= 50 ? '#F59E0B' : '#E05540',
-                    }} />
-                </div>
-              </div>
             </>
           ) : null}
         </div>
       )}
+
+      {/* Transfer activity — where to where */}
+      <div className="border-t border-gray-100 pt-4">
+        <PlantTransferActivity plantId={plant.plant_id} />
+      </div>
     </>
   );
 }

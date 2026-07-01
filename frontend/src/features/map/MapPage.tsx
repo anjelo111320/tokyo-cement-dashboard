@@ -1,15 +1,17 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { MapContainer, TileLayer, Marker, Circle, useMap } from 'react-leaflet';
 import { useQuery } from '@tanstack/react-query';
-import { Layers, List, Map as MapIcon, Factory, Warehouse, Anchor, Building2, ArrowLeft, MapPin, Search, X } from 'lucide-react';
-import { formatNumber, calcUtilization } from '@/utils/formatters';
-import { useLedgerKpis } from '@/features/material_ledger/hooks/useLedger';
+import { Layers, List, Map as MapIcon, Factory, Warehouse, Anchor, Building2, ArrowLeft, MapPin, Search, X, SlidersHorizontal, RotateCcw, ArrowRightLeft, Radio } from 'lucide-react';
+import { formatNumber } from '@/utils/formatters';
+import { useLedgerKpis, useLedgerTransfers } from '@/features/material_ledger/hooks/useLedger';
 import { getPlantTypeInfo } from './components/plantTypeUtils';
 import { materialLedgerService } from '@/services/material_ledger.service';
 import { queryKeys } from '@/constants/queryKeys';
 import { MapBottomSheet } from './components/MapBottomSheet';
 import type { SelectedMapItem } from './components/MapBottomSheet';
 import { MapErrorBoundary } from './components/MapErrorBoundary';
+import { TransferArcs } from './components/TransferArcs';
+import { PlantTransferActivity } from './components/PlantTransferActivity';
 import { Skeleton } from '@/components/common/LoadingSkeleton';
 import { cn } from '@/utils/cn';
 import {
@@ -17,6 +19,56 @@ import {
   FACTORY_PLANT_IDS, TERMINAL_PLANT_IDS, HQ_PLANT_IDS,
 } from './components/mapIcons';
 import type { LedgerPlant } from '@/types/material_ledger.types';
+
+// ── Filter types ──────────────────────────────────────────────────────────────
+
+type PlantTypeKey = 'factory' | 'terminal' | 'hq' | 'depot';
+type DataStatusKey = 'all' | 'with_data' | 'no_data';
+
+interface MapFilters {
+  types:            Record<PlantTypeKey, boolean>;
+  dataStatus:       DataStatusKey;
+  inTransitOnly:    boolean;
+  showArcs:         boolean;
+  selectedPlantIds: string[] | null;  // null = all; string[] = explicit subset
+}
+
+const DEFAULT_FILTERS: MapFilters = {
+  types:            { factory: true, terminal: true, hq: true, depot: true },
+  dataStatus:       'all',
+  inTransitOnly:    false,
+  showArcs:         true,
+  selectedPlantIds: null,
+};
+
+function getPlantTypeKey(plantId: string): PlantTypeKey {
+  if (FACTORY_PLANT_IDS.has(plantId))  return 'factory';
+  if (TERMINAL_PLANT_IDS.has(plantId)) return 'terminal';
+  if (HQ_PLANT_IDS.has(plantId))       return 'hq';
+  return 'depot';
+}
+
+function countActiveFilters(f: MapFilters): number {
+  const disabledTypes = Object.values(f.types).filter(v => !v).length;
+  const plantFilter   = f.selectedPlantIds !== null ? 1 : 0;
+  return disabledTypes + (f.dataStatus !== 'all' ? 1 : 0) + (f.inTransitOnly ? 1 : 0) + plantFilter + (!f.showArcs ? 1 : 0);
+}
+
+function applyMapFilters(
+  plants: LedgerPlant[],
+  filters: MapFilters,
+  transitIds: Set<string>,
+): LedgerPlant[] {
+  const selectedSet = filters.selectedPlantIds ? new Set(filters.selectedPlantIds) : null;
+  return plants.filter(p => {
+    if (!filters.types[getPlantTypeKey(p.plant_id)])              return false;
+    if (filters.dataStatus === 'with_data' && !p.has_ledger_data) return false;
+    if (filters.dataStatus === 'no_data'   &&  p.has_ledger_data) return false;
+    if (filters.inTransitOnly && !transitIds.has(p.plant_id))     return false;
+    if (selectedSet && !selectedSet.has(p.plant_id))              return false;
+    return true;
+  });
+}
 
 // ── Tile layers ───────────────────────────────────────────────────────────────
 const CARTO = '&copy; OpenStreetMap contributors &copy; CARTO';
@@ -111,12 +163,6 @@ function DesktopPlantDetail({ plant, onBack }: { plant: LedgerPlant; onBack: () 
   const { Icon, iconColor, iconBg, typeLabel } = getPlantTypeInfo(plant.plant_id);
   const { data: kpis, isLoading: kpisLoading } = useLedgerKpis(plant.plant_id);
 
-  const utilization = calcUtilization(
-    kpis?.opening_stock_mt     ?? 0,
-    kpis?.total_receipts_mt    ?? 0,
-    kpis?.total_consumption_mt ?? 0,
-  );
-
   return (
     <div className="flex-1 overflow-y-auto flex flex-col">
       {/* Back button */}
@@ -196,43 +242,66 @@ function DesktopPlantDetail({ plant, onBack }: { plant: LedgerPlant; onBack: () 
                   ))}
                 </div>
 
-                {/* Utilization */}
-                <div className="bg-gray-50 rounded-xl p-3">
-                  <div className="flex items-center justify-between mb-1.5">
-                    <p className="text-[10px] text-gray-400">Utilization Rate</p>
-                    <p className="text-xs font-bold" style={{
-                      color: utilization >= 80 ? '#22C55E' : utilization >= 50 ? '#F59E0B' : '#E05540',
-                    }}>
-                      {formatNumber(utilization, 1)}%
-                    </p>
-                  </div>
-                  <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                    <div className="h-full rounded-full transition-all duration-500"
-                      style={{
-                        width: `${utilization}%`,
-                        backgroundColor: utilization >= 80 ? '#22C55E' : utilization >= 50 ? '#F59E0B' : '#E05540',
-                      }} />
-                  </div>
-                </div>
               </>
             ) : null}
           </div>
         )}
+
+        {/* Transfer activity — where to where */}
+        <div className="border-t border-gray-100 pt-4">
+          <PlantTransferActivity plantId={plant.plant_id} />
+        </div>
       </div>
     </div>
   );
 }
 
+// ── Co-location spreader ──────────────────────────────────────────────────────
+// Plants at the exact same lat/lng (e.g. 2140 and 2143 at Puttalam) would
+// stack on top of each other. This fans co-located groups out in a small arc
+// (~250 m radius) so every pin is individually clickable.
+function spreadColocated(plants: LedgerPlant[]): LedgerPlant[] {
+  const OFFSET_DEG = 0.0022; // ≈ 245 m at Sri Lanka latitudes
+
+  // Group plants by rounded coordinate key (4 decimal places ≈ 11 m precision)
+  const byPos = new Map<string, LedgerPlant[]>();
+  for (const p of plants) {
+    const key = `${p.latitude?.toFixed(4)},${p.longitude?.toFixed(4)}`;
+    if (!byPos.has(key)) byPos.set(key, []);
+    byPos.get(key)!.push(p);
+  }
+
+  const result: LedgerPlant[] = [];
+  for (const group of byPos.values()) {
+    if (group.length === 1) {
+      result.push(group[0]);
+    } else {
+      const step = (2 * Math.PI) / group.length;
+      group.forEach((p, i) => {
+        result.push({
+          ...p,
+          latitude:  (p.latitude  ?? 0) + OFFSET_DEG * Math.sin(i * step),
+          longitude: (p.longitude ?? 0) + OFFSET_DEG * Math.cos(i * step),
+        });
+      });
+    }
+  }
+  return result;
+}
+
 // ── Map canvas ────────────────────────────────────────────────────────────────
-function MapCanvas({ plants, tileLayer, flyTarget, selectedId, onSelectPlant, isLoading }: {
+function MapCanvas({ plants, tileLayer, flyTarget, selectedId, onSelectPlant, isLoading, showArcs }: {
   plants: LedgerPlant[];
   tileLayer: TileLayerKey;
   flyTarget: [number, number] | null;
   selectedId: string | null;
   onSelectPlant: (p: LedgerPlant) => void;
   isLoading: boolean;
+  showArcs: boolean;
 }) {
-  const visiblePlants = plants.filter((p) => p.latitude != null && p.longitude != null);
+  const visiblePlants = spreadColocated(
+    plants.filter((p) => p.latitude != null && p.longitude != null),
+  );
 
   if (isLoading) return <Skeleton className="absolute inset-0 rounded-none" />;
 
@@ -272,25 +341,56 @@ function MapCanvas({ plants, tileLayer, flyTarget, selectedId, onSelectPlant, is
           )}
         </Marker>
       ))}
+
+      {/* Animated in-transit transfer arcs — toggled by showArcs filter */}
+      {showArcs && <TransferArcs />}
     </MapContainer>
   );
 }
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export function MapPage() {
-  const [selectedItem, setSelectedItem] = useState<SelectedMapItem | null>(null);
-  const [mobileTab, setMobileTab] = useState<MobileTab>('map');
-  const [tileLayer, setTileLayer] = useState<TileLayerKey>('light');
-  const [styleOpen, setStyleOpen] = useState(false);
-  const [legendOpen, setLegendOpen] = useState(false);
-  const [search, setSearch] = useState('');
-  const [flyTarget, setFlyTarget] = useState<[number, number] | null>(null);
+  const [selectedItem,      setSelectedItem]      = useState<SelectedMapItem | null>(null);
+  const [mobileTab,         setMobileTab]         = useState<MobileTab>('map');
+  const [tileLayer,         setTileLayer]         = useState<TileLayerKey>('light');
+  const [styleOpen,         setStyleOpen]         = useState(false);
+  const [legendOpen,        setLegendOpen]        = useState(false);
+  const [filterOpen,        setFilterOpen]        = useState(false);
+  const [search,            setSearch]            = useState('');
+  const [flyTarget,         setFlyTarget]         = useState<[number, number] | null>(null);
+  const [filters,           setFilters]           = useState<MapFilters>(DEFAULT_FILTERS);
+  const [plantFilterSearch, setPlantFilterSearch] = useState('');
+  const [plantSectionOpen,  setPlantSectionOpen]  = useState(false);
 
   const { data: plants = [], isLoading } = useQuery({
     queryKey: queryKeys.ledger.plants(),
     queryFn: () => materialLedgerService.getPlants(),
     staleTime: 30 * 60_000,
   });
+
+  // Which plants have active in-transit transfers (for the in-transit filter)
+  const { data: transferData } = useLedgerTransfers();
+  const transitPlantIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const t of transferData?.transfers ?? []) {
+      ids.add(t.source_plant_id);
+      ids.add(t.dest_plant_id);
+    }
+    return ids;
+  }, [transferData]);
+
+  // Apply filters — search is handled separately in the sidebar plant list
+  const filteredPlants = useMemo(
+    () => applyMapFilters(plants, filters, transitPlantIds),
+    [plants, filters, transitPlantIds],
+  );
+
+  // Per-type counts (of all plants, not just visible) for the filter panel labels
+  const typeCounts = useMemo(() => {
+    const c = { factory: 0, terminal: 0, hq: 0, depot: 0 };
+    for (const p of plants) c[getPlantTypeKey(p.plant_id)]++;
+    return c;
+  }, [plants]);
 
   const handleSelectPlant = useCallback((plant: LedgerPlant) => {
     setSelectedItem({ type: 'plant', data: plant });
@@ -321,17 +421,17 @@ export function MapPage() {
   const depotCount    = plants.filter((p) => !FACTORY_PLANT_IDS.has(p.plant_id) && !TERMINAL_PLANT_IDS.has(p.plant_id) && !HQ_PLANT_IDS.has(p.plant_id)).length;
   const withDataCount = plants.filter((p) => p.has_ledger_data).length;
 
-  // Search filter
+  // Search filter (applied to sidebar list + map search dropdown — separate from map filters)
   const q = search.trim().toLowerCase();
-  const filteredPlants = q
-    ? plants.filter((p) =>
+  const searchResults = q
+    ? filteredPlants.filter((p) =>
         p.plant_id.toLowerCase().includes(q) ||
         p.name.toLowerCase().includes(q) ||
         (p.city ?? '').toLowerCase().includes(q) ||
         (p.address ?? '').toLowerCase().includes(q) ||
         (p.postal_code ?? '').toLowerCase().includes(q),
       )
-    : plants;
+    : filteredPlants;
 
   const LEGEND_ITEMS = [
     { Icon: Factory,   color: '#F59E0B', label: 'Cement Factory' },
@@ -340,94 +440,339 @@ export function MapPage() {
     { Icon: Building2, color: '#16A34A', label: 'HQ / Admin' },
   ];
 
+  const filterCount = countActiveFilters(filters);
+
+  // ── Filter panel ──────────────────────────────────────────────────────────
+  const TYPE_ROWS: { key: PlantTypeKey; label: string; color: string }[] = [
+    { key: 'factory',  label: 'Factories',         color: '#F59E0B' },
+    { key: 'terminal', label: 'Ports / Terminals',  color: '#DC2626' },
+    { key: 'hq',       label: 'HQ / Admin',         color: '#16A34A' },
+    { key: 'depot',    label: 'Distribution Depots', color: '#2563EB' },
+  ];
+
+  const DATA_ROWS: { key: DataStatusKey; label: string }[] = [
+    { key: 'all',       label: 'All plants'       },
+    { key: 'with_data', label: 'Has ledger data'  },
+    { key: 'no_data',   label: 'No data yet'      },
+  ];
+
+  // Plants shown in the individual-plant picker (after type-search)
+  const plantPickerList = useMemo(() => {
+    const q = plantFilterSearch.trim().toLowerCase();
+    return plants
+      .filter(p =>
+        !q ||
+        p.plant_id.toLowerCase().includes(q) ||
+        p.name.toLowerCase().includes(q) ||
+        (p.city ?? '').toLowerCase().includes(q),
+      )
+      .sort((a, b) => a.plant_id.localeCompare(b.plant_id));
+  }, [plants, plantFilterSearch]);
+
+  function isPlantChecked(id: string) {
+    return filters.selectedPlantIds === null || filters.selectedPlantIds.includes(id);
+  }
+
+  function togglePlantId(id: string) {
+    setFilters(f => {
+      const allIds = plants.map(p => p.plant_id);
+      if (f.selectedPlantIds === null) {
+        // Deselect this one from the implicit "all"
+        return { ...f, selectedPlantIds: allIds.filter(x => x !== id) };
+      }
+      const next = f.selectedPlantIds.includes(id)
+        ? f.selectedPlantIds.filter(x => x !== id)
+        : [...f.selectedPlantIds, id];
+      return { ...f, selectedPlantIds: next.length === allIds.length ? null : next };
+    });
+  }
+
+
+  const FilterPanel = filterOpen && (
+    <div className={cn(
+      'absolute top-full right-0 mt-2 w-64 rounded-2xl shadow-2xl border overflow-hidden origin-top-right',
+      isDarkMap ? 'bg-gray-900/97 border-gray-700' : 'bg-white/98 border-gray-200',
+    )}>
+
+      {/* ── Transfer Arcs toggle ─────────────────── */}
+      <div className={cn('px-3.5 py-2.5 border-b', isDarkMap ? 'border-gray-700' : 'border-gray-100')}>
+        <p className={cn('text-[10px] font-bold uppercase tracking-widest mb-2', isDarkMap ? 'text-gray-400' : 'text-gray-400')}>
+          Overlays
+        </p>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Radio size={12} className="text-[#E05540] shrink-0" />
+            <span className={cn('text-xs', isDarkMap ? 'text-gray-300' : 'text-gray-700')}>Transfer Arcs</span>
+          </div>
+          {/* Toggle switch */}
+          <button
+            onClick={() => setFilters(f => ({ ...f, showArcs: !f.showArcs }))}
+            className={cn(
+              'w-9 h-5 rounded-full transition-colors duration-200 relative shrink-0',
+              filters.showArcs ? 'bg-[#E05540]' : isDarkMap ? 'bg-gray-600' : 'bg-gray-300',
+            )}
+            aria-label="Toggle transfer arcs"
+          >
+            <span className={cn(
+              'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200',
+              filters.showArcs ? 'translate-x-4' : 'translate-x-0.5',
+            )} />
+          </button>
+        </div>
+      </div>
+
+      {/* ── Plant Type ───────────────────────────── */}
+      <div className={cn('px-3.5 pt-2.5 pb-2 border-b', isDarkMap ? 'border-gray-700' : 'border-gray-100')}>
+        <p className={cn('text-[10px] font-bold uppercase tracking-widest mb-2', isDarkMap ? 'text-gray-400' : 'text-gray-400')}>
+          Plant Type
+        </p>
+        <div className="space-y-1.5">
+          {TYPE_ROWS.map(({ key, label, color }) => (
+            <label key={key} className="flex items-center gap-2.5 cursor-pointer">
+              <span
+                className={cn(
+                  'w-4 h-4 rounded flex items-center justify-center shrink-0 border transition-all duration-100',
+                  filters.types[key] ? 'border-transparent' : isDarkMap ? 'border-gray-600' : 'border-gray-300',
+                )}
+                style={filters.types[key] ? { backgroundColor: color } : {}}
+              >
+                {filters.types[key] && (
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                    <path d="M1.5 5L4 7.5L8.5 2" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                )}
+              </span>
+              <input type="checkbox" className="sr-only" checked={filters.types[key]}
+                onChange={e => setFilters(f => ({ ...f, types: { ...f.types, [key]: e.target.checked } }))}
+              />
+              <span className={cn('text-xs flex-1', isDarkMap ? 'text-gray-300' : 'text-gray-700')}>{label}</span>
+              <span className={cn('text-[10px] font-bold tabular-nums px-1.5 py-0.5 rounded-full', isDarkMap ? 'bg-gray-700 text-gray-400' : 'bg-gray-100 text-gray-500')}>
+                {typeCounts[key]}
+              </span>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Individual Plants ────────────────────── */}
+      <div className={cn('border-b', isDarkMap ? 'border-gray-700' : 'border-gray-100')}>
+        {/* Section header — click to expand/collapse */}
+        <button
+          onClick={() => setPlantSectionOpen(o => !o)}
+          className={cn(
+            'w-full flex items-center justify-between px-3.5 py-2.5 text-left transition-colors',
+            isDarkMap ? 'hover:bg-gray-800/40' : 'hover:bg-gray-50',
+          )}
+        >
+          <p className={cn('text-[10px] font-bold uppercase tracking-widest', isDarkMap ? 'text-gray-400' : 'text-gray-400')}>
+            Plants
+          </p>
+          <div className="flex items-center gap-2">
+            {filters.selectedPlantIds !== null && (
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-[#1D4E6B]/15 text-[#1D4E6B]">
+                {filters.selectedPlantIds.length}/{plants.length}
+              </span>
+            )}
+            <span className={cn('text-[10px] transition-transform duration-150', isDarkMap ? 'text-gray-500' : 'text-gray-400', plantSectionOpen && 'rotate-180')}>
+              ▾
+            </span>
+          </div>
+        </button>
+
+        {plantSectionOpen && (
+          <div className="px-3 pb-2.5">
+            {/* Search within plant list */}
+            <div className="relative mb-2">
+              <Search size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+              <input
+                value={plantFilterSearch}
+                onChange={e => setPlantFilterSearch(e.target.value)}
+                placeholder="Search plant…"
+                className={cn(
+                  'w-full pl-6 pr-6 py-1.5 rounded-lg border text-[11px] focus:outline-none focus:ring-1 focus:ring-[#2E6B8A]/40',
+                  isDarkMap
+                    ? 'bg-gray-800 border-gray-600 text-gray-200 placeholder:text-gray-500'
+                    : 'bg-gray-50 border-gray-200 text-gray-700 placeholder:text-gray-400',
+                )}
+              />
+              {plantFilterSearch && (
+                <button onClick={() => setPlantFilterSearch('')}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                  <X size={10} />
+                </button>
+              )}
+            </div>
+
+            {/* All / None quick actions */}
+            <div className="flex gap-1.5 mb-2">
+              <button
+                onClick={() => setFilters(f => ({ ...f, selectedPlantIds: null }))}
+                className={cn(
+                  'flex-1 text-[10px] font-semibold py-1 rounded-lg border transition-colors',
+                  filters.selectedPlantIds === null
+                    ? 'bg-[#1D4E6B] text-white border-[#2E6B8A]'
+                    : isDarkMap ? 'border-gray-600 text-gray-400 hover:text-white hover:bg-gray-700' : 'border-gray-200 text-gray-500 hover:bg-gray-100',
+                )}
+              >
+                All
+              </button>
+              <button
+                onClick={() => setFilters(f => ({ ...f, selectedPlantIds: [] }))}
+                className={cn(
+                  'flex-1 text-[10px] font-semibold py-1 rounded-lg border transition-colors',
+                  filters.selectedPlantIds?.length === 0
+                    ? 'bg-[#E05540] text-white border-[#E05540]'
+                    : isDarkMap ? 'border-gray-600 text-gray-400 hover:text-white hover:bg-gray-700' : 'border-gray-200 text-gray-500 hover:bg-gray-100',
+                )}
+              >
+                None
+              </button>
+            </div>
+
+            {/* Scrollable plant checklist */}
+            <div className="max-h-44 overflow-y-auto space-y-0.5 pr-0.5">
+              {plantPickerList.map(p => {
+                const checked = isPlantChecked(p.plant_id);
+                const { iconColor } = getPlantTypeInfo(p.plant_id);
+                return (
+                  <label key={p.plant_id} className={cn(
+                    'flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors',
+                    isDarkMap ? 'hover:bg-gray-800/60' : 'hover:bg-gray-50',
+                  )}>
+                    <span
+                      className={cn(
+                        'w-3.5 h-3.5 rounded flex items-center justify-center shrink-0 border transition-all duration-100',
+                        checked ? 'border-transparent' : isDarkMap ? 'border-gray-600' : 'border-gray-300',
+                      )}
+                      style={checked ? { backgroundColor: iconColor } : {}}
+                    >
+                      {checked && (
+                        <svg width="8" height="8" viewBox="0 0 10 10" fill="none">
+                          <path d="M1.5 5L4 7.5L8.5 2" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                      )}
+                    </span>
+                    <input type="checkbox" className="sr-only" checked={checked} onChange={() => togglePlantId(p.plant_id)} />
+                    <span className={cn('font-mono text-[10px] font-bold shrink-0', isDarkMap ? 'text-gray-300' : 'text-gray-600')}>
+                      {p.plant_id}
+                    </span>
+                    <span className={cn('text-[10px] truncate flex-1', isDarkMap ? 'text-gray-400' : 'text-gray-500')}>
+                      {p.city ?? p.name.split(' ').slice(-2).join(' ')}
+                    </span>
+                  </label>
+                );
+              })}
+              {plantPickerList.length === 0 && (
+                <p className={cn('text-[11px] text-center py-2', isDarkMap ? 'text-gray-500' : 'text-gray-400')}>
+                  No plants found
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Data status ──────────────────────────── */}
+      <div className={cn('px-3.5 py-2.5 border-b', isDarkMap ? 'border-gray-700' : 'border-gray-100')}>
+        <p className={cn('text-[10px] font-bold uppercase tracking-widest mb-2', isDarkMap ? 'text-gray-400' : 'text-gray-400')}>
+          Data Status
+        </p>
+        <div className="space-y-1.5">
+          {DATA_ROWS.map(({ key, label }) => (
+            <label key={key} className="flex items-center gap-2.5 cursor-pointer">
+              <span className={cn(
+                'w-4 h-4 rounded-full border flex items-center justify-center shrink-0 transition-all duration-100',
+                filters.dataStatus === key ? 'border-[#1D4E6B] bg-[#1D4E6B]' : isDarkMap ? 'border-gray-600' : 'border-gray-300',
+              )}>
+                {filters.dataStatus === key && <span className="w-2 h-2 rounded-full bg-white" />}
+              </span>
+              <input type="radio" className="sr-only" checked={filters.dataStatus === key}
+                onChange={() => setFilters(f => ({ ...f, dataStatus: key }))} />
+              <span className={cn('text-xs', isDarkMap ? 'text-gray-300' : 'text-gray-700')}>{label}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      {/* ── In-transit toggle ────────────────────── */}
+      <div className={cn('px-3.5 py-2.5 border-b', isDarkMap ? 'border-gray-700' : 'border-gray-100')}>
+        <label className="flex items-center gap-2.5 cursor-pointer">
+          <span className={cn(
+            'w-4 h-4 rounded flex items-center justify-center shrink-0 border transition-all duration-100',
+            filters.inTransitOnly ? 'border-transparent bg-[#E05540]' : isDarkMap ? 'border-gray-600' : 'border-gray-300',
+          )}>
+            {filters.inTransitOnly && (
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                <path d="M1.5 5L4 7.5L8.5 2" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            )}
+          </span>
+          <input type="checkbox" className="sr-only" checked={filters.inTransitOnly}
+            onChange={e => setFilters(f => ({ ...f, inTransitOnly: e.target.checked }))} />
+          <ArrowRightLeft size={12} className="shrink-0 text-[#E05540]" />
+          <span className={cn('text-xs flex-1', isDarkMap ? 'text-gray-300' : 'text-gray-700')}>
+            In-transit plants only
+          </span>
+          {transitPlantIds.size > 0 && (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#E05540]/15 text-[#E05540]">
+              {transitPlantIds.size}
+            </span>
+          )}
+        </label>
+      </div>
+
+      {/* ── Footer: count + reset ────────────────── */}
+      <div className={cn('px-3.5 py-2.5 flex items-center justify-between gap-2', isDarkMap ? 'bg-gray-800/60' : 'bg-gray-50')}>
+        <span className={cn('text-[11px] font-semibold', isDarkMap ? 'text-gray-300' : 'text-gray-600')}>
+          <span className={cn(isDarkMap ? 'text-white' : 'text-gray-900')}>{filteredPlants.length}</span>
+          {' / '}
+          <span>{plants.length}</span>
+          {' plants visible'}
+        </span>
+        {filterCount > 0 && (
+          <button
+            onClick={() => { setFilters(DEFAULT_FILTERS); setPlantFilterSearch(''); }}
+            className={cn(
+              'flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg transition-colors',
+              isDarkMap ? 'text-gray-400 hover:text-white hover:bg-gray-700' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-200',
+            )}
+          >
+            <RotateCcw size={11} />
+            Reset
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
+
   // Combined controls overlay (Style + Legend toggles)
   const MapControls = (
     <div className="absolute top-3 right-3 z-999 pointer-events-auto flex flex-col items-end gap-2">
-      <div className="flex items-start gap-2">
+      {/* Pills row: Filter · Legend · Style */}
+      <div className="flex items-center gap-2">
 
-        {/* Map search — autocomplete */}
+        {/* Filter toggle */}
         <div className="relative">
-          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={(e) => {
-              e.stopPropagation(); // prevent Leaflet swallowing keystrokes
-              if (e.key === 'Escape') setSearch('');
-            }}
-            onClick={(e) => e.stopPropagation()}
-            placeholder="Search ID, name, city…"
-            className={cn(
-              'pl-8 pr-7 py-2 text-xs rounded-xl border shadow-md backdrop-blur-sm focus:outline-none focus:ring-2 focus:ring-primary-400 w-52 placeholder:text-gray-400',
-              isDarkMap
-                ? 'bg-gray-900/90 border-gray-700 text-gray-200 placeholder:text-gray-500'
-                : 'bg-white/95 border-gray-200 text-gray-700',
+          <button
+            onClick={() => { setFilterOpen(p => !p); setStyleOpen(false); setLegendOpen(false); }}
+            className={cn(btnBase, filterOpen && btnActive)}
+          >
+            <SlidersHorizontal size={13} />
+            Filters
+            {filterCount > 0 && (
+              <span className="min-w-4 h-4 flex items-center justify-center rounded-full bg-[#E05540] text-white text-[9px] font-bold px-1">
+                {filterCount}
+              </span>
             )}
-          />
-          {search && (
-            <button
-              onClick={(e) => { e.stopPropagation(); setSearch(''); }}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-              aria-label="Clear"
-            >
-              <X size={13} />
-            </button>
-          )}
-
-          {/* Results dropdown */}
-          {q && (
-            <div className={cn(
-              'absolute top-full left-0 mt-1.5 w-64 rounded-xl border shadow-xl overflow-hidden z-10',
-              isDarkMap ? 'bg-gray-900/97 border-gray-700' : 'bg-white border-gray-200',
-            )}>
-              {filteredPlants.length === 0 ? (
-                <p className={cn('px-3 py-3 text-xs', isDarkMap ? 'text-gray-400' : 'text-gray-500')}>
-                  No plants found
-                </p>
-              ) : (
-                <>
-                  <p className={cn('px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest border-b',
-                    isDarkMap ? 'text-gray-500 border-gray-700' : 'text-gray-400 border-gray-100')}>
-                    {filteredPlants.length} result{filteredPlants.length !== 1 ? 's' : ''}
-                  </p>
-                  <ul className="max-h-56 overflow-y-auto">
-                    {filteredPlants.slice(0, 8).map((p) => (
-                      <li key={p.plant_id}>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleSelectPlant(p);
-                            setSearch('');
-                          }}
-                          className={cn(
-                            'w-full flex items-center gap-2.5 px-3 py-2.5 text-left transition-colors',
-                            isDarkMap ? 'hover:bg-gray-800/60' : 'hover:bg-gray-50',
-                          )}
-                        >
-                          <TypeIcon plantId={p.plant_id} size={13} />
-                          <div className="min-w-0 flex-1">
-                            <p className={cn('text-xs font-semibold truncate', isDarkMap ? 'text-gray-200' : 'text-gray-800')}>
-                              {p.name}
-                            </p>
-                            <p className={cn('text-[10px] truncate', isDarkMap ? 'text-gray-500' : 'text-gray-400')}>
-                              {p.city ?? ''} · {p.plant_id}
-                            </p>
-                          </div>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              )}
-            </div>
-          )}
+          </button>
+          {FilterPanel}
         </div>
 
         {/* Legend toggle */}
         <div className="relative">
           <button
-            onClick={() => { setLegendOpen((p) => !p); setStyleOpen(false); }}
+            onClick={() => { setLegendOpen((p) => !p); setStyleOpen(false); setFilterOpen(false); }}
             className={cn(btnBase, legendOpen && btnActive)}
           >
             <List size={13} />
@@ -495,6 +840,83 @@ export function MapPage() {
         </div>
 
       </div>
+
+      {/* Search bar — below pills */}
+      <div className="relative">
+        <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === 'Escape') setSearch('');
+          }}
+          onClick={(e) => e.stopPropagation()}
+          placeholder="Search ID, name, city…"
+          className={cn(
+            'pl-8 pr-7 py-2 text-xs rounded-xl border shadow-md backdrop-blur-sm focus:outline-none focus:ring-2 focus:ring-primary-400 w-52 placeholder:text-gray-400',
+            isDarkMap
+              ? 'bg-gray-900/90 border-gray-700 text-gray-200 placeholder:text-gray-500'
+              : 'bg-white/95 border-gray-200 text-gray-700',
+          )}
+        />
+        {search && (
+          <button
+            onClick={(e) => { e.stopPropagation(); setSearch(''); }}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+            aria-label="Clear"
+          >
+            <X size={13} />
+          </button>
+        )}
+        {q && (
+          <div className={cn(
+            'absolute top-full right-0 mt-1.5 w-64 rounded-xl border shadow-xl overflow-hidden z-10',
+            isDarkMap ? 'bg-gray-900/97 border-gray-700' : 'bg-white border-gray-200',
+          )}>
+            {searchResults.length === 0 ? (
+              <p className={cn('px-3 py-3 text-xs', isDarkMap ? 'text-gray-400' : 'text-gray-500')}>
+                No plants found
+              </p>
+            ) : (
+              <>
+                <p className={cn('px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest border-b',
+                  isDarkMap ? 'text-gray-500 border-gray-700' : 'text-gray-400 border-gray-100')}>
+                  {searchResults.length} result{searchResults.length !== 1 ? 's' : ''}
+                </p>
+                <ul className="max-h-56 overflow-y-auto">
+                  {searchResults.slice(0, 8).map((p) => (
+                    <li key={p.plant_id}>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleSelectPlant(p);
+                          setSearch('');
+                        }}
+                        className={cn(
+                          'w-full flex items-center gap-2.5 px-3 py-2.5 text-left transition-colors',
+                          isDarkMap ? 'hover:bg-gray-800/60' : 'hover:bg-gray-50',
+                        )}
+                      >
+                        <TypeIcon plantId={p.plant_id} size={13} />
+                        <div className="min-w-0 flex-1">
+                          <p className={cn('text-xs font-semibold truncate', isDarkMap ? 'text-gray-200' : 'text-gray-800')}>
+                            {p.name}
+                          </p>
+                          <p className={cn('text-[10px] truncate', isDarkMap ? 'text-gray-500' : 'text-gray-400')}>
+                            {p.city ?? ''} · {p.plant_id}
+                          </p>
+                        </div>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 
@@ -520,9 +942,9 @@ export function MapPage() {
         {mobileTab === 'map' && (
           <div className="relative flex-1 overflow-hidden">
             <MapErrorBoundary>
-              <MapCanvas plants={plants} tileLayer={tileLayer} flyTarget={flyTarget}
+              <MapCanvas plants={filteredPlants} tileLayer={tileLayer} flyTarget={flyTarget}
                 selectedId={selectedItem?.data.plant_id ?? null}
-                onSelectPlant={handleSelectPlant} isLoading={isLoading} />
+                onSelectPlant={handleSelectPlant} isLoading={isLoading} showArcs={filters.showArcs} />
             </MapErrorBoundary>
             {!isLoading && MapControls}
           </div>
@@ -551,23 +973,25 @@ export function MapPage() {
               </div>
               {q && (
                 <p className="text-[10px] text-gray-400 mt-1.5 px-0.5">
-                  {filteredPlants.length} result{filteredPlants.length !== 1 ? 's' : ''}
+                  {searchResults.length} result{searchResults.length !== 1 ? 's' : ''}
                 </p>
               )}
             </div>
-            <PlantList plants={filteredPlants} selectedId={selectedItem?.data.plant_id ?? null}
+            <PlantList plants={searchResults} selectedId={selectedItem?.data.plant_id ?? null}
               onSelect={handleSelectPlant} onFly={handleFly} />
           </div>
         )}
       </div>
 
       {/* ── DESKTOP ────────────────────────────────────────────────────── */}
-      <div className="hidden lg:flex h-screen overflow-hidden">
+      {/* fixed inset anchored right of the fixed sidebar (w-60 = 240px) so
+          height resolves correctly regardless of the parent <main> min-h-screen */}
+      <div className="hidden lg:flex fixed top-0 left-60 right-0 bottom-0 overflow-hidden">
         {/* Side panel */}
         <aside className="w-72 shrink-0 flex flex-col bg-white border-r border-gray-200">
           {/* Header */}
           <div className="px-4 pt-4 pb-3 border-b border-gray-100">
-            <h2 className="text-sm font-bold text-gray-900 mb-3">Tokyo Cement Plant Network</h2>
+            <h2 className="text-sm font-bold text-gray-900 mb-3">INSEE Plant Network</h2>
             <div className="grid grid-cols-3 gap-2">
               {[
                 { label: 'Factories', value: factoryCount, color: 'text-[#0D1F2D]' },
@@ -605,27 +1029,29 @@ export function MapPage() {
               </div>
               {q && (
                 <p className="text-[10px] text-gray-400 mt-1.5 px-0.5">
-                  {filteredPlants.length} result{filteredPlants.length !== 1 ? 's' : ''}
+                  {searchResults.length} result{searchResults.length !== 1 ? 's' : ''}
                 </p>
               )}
             </div>
           )}
           {selectedItem
             ? <DesktopPlantDetail plant={selectedItem.data} onBack={() => { setSelectedItem(null); }} />
-            : <PlantList plants={filteredPlants} selectedId={null} onSelect={handleSelectPlant} onFly={handleFly} />
+            : <PlantList plants={searchResults} selectedId={null} onSelect={handleSelectPlant} onFly={handleFly} />
           }
           <div className="px-4 py-3 border-t border-gray-100 bg-primary-50">
-            <p className="text-[10px] text-primary-700 text-center">Sri Lanka — 30 Tokyo Cement locations</p>
+            <p className="text-[10px] text-primary-700 text-center">Sri Lanka — 30 INSEE locations</p>
           </div>
         </aside>
 
-        {/* Map */}
-        <div className="relative flex-1">
-          <MapErrorBoundary>
-            <MapCanvas plants={plants} tileLayer={tileLayer} flyTarget={flyTarget}
-              selectedId={selectedItem?.data.plant_id ?? null}
-              onSelectPlant={handleSelectPlant} isLoading={isLoading} />
-          </MapErrorBoundary>
+        {/* Map canvas — absolute inset-0 so Leaflet height:100% resolves correctly */}
+        <div className="relative flex-1 overflow-hidden">
+          <div className="absolute inset-0">
+            <MapErrorBoundary>
+              <MapCanvas plants={filteredPlants} tileLayer={tileLayer} flyTarget={flyTarget}
+                selectedId={selectedItem?.data.plant_id ?? null}
+                onSelectPlant={handleSelectPlant} isLoading={isLoading} showArcs={filters.showArcs} />
+            </MapErrorBoundary>
+          </div>
           {!isLoading && MapControls}
         </div>
       </div>

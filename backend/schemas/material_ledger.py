@@ -24,55 +24,6 @@ class LedgerKpiSchema(BaseModel):
     unit:                  str
 
 
-class CategoryFlowRow(BaseModel):
-    """One row in the inventory flow waterfall (AB / ZU / KB / VN / EB or any new code)."""
-    category_code:   str
-    label:           str
-    quantity:        float
-    total_price_lkr: Optional[float] = None
-    sign:            int          # +1 = adds, -1 = reduces
-    color:           str
-    role:            str          # opening / inflow / summary / outflow / closing / unknown
-    unit:            str
-
-
-class InventoryFlowSchema(BaseModel):
-    rows: list[CategoryFlowRow]
-    unit: str
-
-
-class SupplyChainNode(BaseModel):
-    plant_id:        str
-    name:            str
-    node_type:       str        # "factory" or "depot"
-    city:            Optional[str] = None
-    production_mt:   Optional[float] = None   # only for factory nodes
-    receipts_mt:     Optional[float] = None   # only for depot nodes
-    ending_stock_mt: Optional[float] = None   # only for depot nodes
-
-
-class SupplyChainSchema(BaseModel):
-    factories:            list[SupplyChainNode]
-    depots:               list[SupplyChainNode]
-    total_produced_mt:    float
-    total_transferred_mt: float
-    unit:                 str
-
-
-class ConsumptionCategory(BaseModel):
-    proc_cat: str
-    label:    str
-    quantity: float
-    pct:      float
-    unit:     str
-
-
-class ConsumptionBreakdownSchema(BaseModel):
-    total_consumption_mt: float
-    categories:           list[ConsumptionCategory]
-    unit:                 str
-
-
 class MovementRowSchema(BaseModel):
     """One raw movement row — includes extra_fields for new CSV columns."""
     plant_id:             str
@@ -92,30 +43,18 @@ class MovementRowSchema(BaseModel):
     extra_fields:         dict[str, Any] = {}   # any new CSV columns pass through here
 
 
-class PlantComparisonRow(BaseModel):
-    plant_id:        str
-    plant_name:      str
-    city:            Optional[str] = None
-    opening_mt:      float
-    receipts_mt:     float
-    consumption_mt:  float
-    closing_mt:      float
-
-
-class PlantComparisonSchema(BaseModel):
-    plants: list[PlantComparisonRow]
-    unit:   str
-
-
 class StockTransferRow(BaseModel):
     """One inter-plant stock transfer parsed from VM VN rows."""
-    source_plant_id:   str
-    source_plant_name: str
-    dest_plant_id:     str
-    dest_plant_name:   str
-    quantity:          float
-    price_lkr:         Optional[float] = None
-    unit:              str
+    source_plant_id:      str
+    source_plant_name:    str
+    dest_plant_id:        str
+    dest_plant_name:      str
+    material_id:          str
+    material_description: str
+    quantity:             float
+    dest_closing_stock:   float   # ending stock of this material at the destination plant
+    price_lkr:            Optional[float] = None
+    unit:                 str
 
 
 class StockTransferSchema(BaseModel):
@@ -126,6 +65,7 @@ class StockTransferSchema(BaseModel):
 class MaterialSchema(BaseModel):
     material_id:          str
     material_description: str
+    closing_stock_mt:     float = 0.0
 
 
 class PlantSchema(BaseModel):
@@ -139,3 +79,49 @@ class PlantSchema(BaseModel):
     latitude:        Optional[float] = None
     longitude:       Optional[float] = None
     has_ledger_data: bool = False
+
+
+# ── Inventory dashboard schemas ───────────────────────────────────────────────
+
+class PlantInventoryRow(BaseModel):
+    """Per-plant inventory breakdown for the dashboard table."""
+    plant_id:          str
+    plant_name:        str
+    city:              Optional[str] = None
+    on_hand_mt:        float   # CA + EB rows
+    in_transit_out_mt: float   # BV + VN + Stock Transfer (factory dispatched)
+    in_transit_in_mt:  float   # BV + ZU + Stock Transfer (depot received)
+    status:            str     # "ok" | "low" | "out" | "no_threshold"
+
+
+class InventorySummarySchema(BaseModel):
+    rows:                  list[PlantInventoryRow]
+    total_on_hand_mt:      float
+    total_in_transit_out:  float
+    total_in_transit_in:   float
+    alert_count:           int
+    unit:                  str
+
+
+class InventoryAlertRow(BaseModel):
+    """One low-stock alert entry shown in the alert panel."""
+    plant_id:      str
+    plant_name:    str
+    city:          Optional[str] = None
+    material_id:   str
+    material_desc: str
+    on_hand_mt:    float
+    threshold_mt:  float
+    pct:           float    # on_hand / threshold × 100, capped at 100
+    status:        str      # "low" | "out"
+
+
+class InventoryAlertsSchema(BaseModel):
+    alerts: list[InventoryAlertRow]
+    unit:   str
+
+
+class MaterialThresholdSchema(BaseModel):
+    material_id:   str
+    material_desc: str
+    min_stock_mt:  float

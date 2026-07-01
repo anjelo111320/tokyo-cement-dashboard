@@ -76,9 +76,13 @@ function makePinIcon(
 }
 
 // ── Per-plant type classification ─────────────────────────────────────────────
-export const FACTORY_PLANT_IDS  = new Set(['2140', '2141', '2143', '2144']);
-export const TERMINAL_PLANT_IDS = new Set(['2120', '2121', '2122', '2123', '2124', '2125', '2127', '2128', '2142', '2145', '2146']);
-export const HQ_PLANT_IDS       = new Set(['2100', '2126', '2129', '2130', '2131']);
+// 2140 = Puttalam Cement Works (factory)
+// 2141 = Ruhunu Cement Works (factory)
+// 2143 = AFR-Puttalam (Alternative Fuel & Raw materials facility — NOT a factory)
+// 2144 = Pre Processing Facility-KEPZ (pre-processing, not a cement factory)
+export const FACTORY_PLANT_IDS  = new Set(['2140', '2141', '2145', '2146']);
+export const TERMINAL_PLANT_IDS = new Set(['2122', '2123', '2124', '2127']);
+export const HQ_PLANT_IDS       = new Set(['2100', '2126', '2129', '2131']);
 
 // ── Icon cache ────────────────────────────────────────────────────────────────
 const _cache = new Map<string, DivIcon>();

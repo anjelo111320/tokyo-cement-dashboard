@@ -32,18 +32,3 @@ export function formatDate(iso: string): string {
   }).format(new Date(iso));
 }
 
-/**
- * Calculates stock utilization as a percentage, capped at 100.
- *
- * Formula: consumption ÷ (opening + receipts) × 100
- * Returns 0 when no stock was available (avoids division by zero).
- */
-export function calcUtilization(
-  openingMt: number,
-  receiptsMt: number,
-  consumptionMt: number,
-): number {
-  const available = openingMt + receiptsMt;
-  if (available <= 0) return 0;
-  return Math.min(100, (consumptionMt / available) * 100);
-}

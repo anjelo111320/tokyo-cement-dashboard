@@ -1,12 +1,13 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Map, BookOpen } from 'lucide-react';
+import { LayoutDashboard, Map, FileBarChart2, Settings } from 'lucide-react';
 import { ROUTES } from '@/constants/routes';
 import { cn } from '@/utils/cn';
 
 const NAV_ITEMS = [
-  { to: ROUTES.HOME,   icon: LayoutDashboard, label: 'Home' },
-  { to: ROUTES.MAP,    icon: Map,             label: 'Map' },
-  { to: ROUTES.LEDGER, icon: BookOpen,        label: 'Ledger' },
+  { to: ROUTES.HOME,     icon: LayoutDashboard, label: 'Home' },
+  { to: ROUTES.MAP,      icon: Map,             label: 'Map' },
+  { to: ROUTES.LEDGER,   icon: FileBarChart2,   label: 'Report' },
+  { to: ROUTES.SETTINGS, icon: Settings,        label: 'Settings' },
 ];
 
 export function BottomNav() {

@@ -1,12 +1,9 @@
-import { Factory, RefreshCw } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { useDataRefresh } from '@/hooks/useDataRefresh';
 
-interface TopBarProps {
-  title?: string;
-}
 
-/** Mobile-only top bar with the Tokyo Cement logo and a manual CSV sync button. */
-export function TopBar({ title = 'Tokyo Cement' }: TopBarProps) {
+/** Mobile-only top bar with the INSEE logo and a manual CSV sync button. */
+export function TopBar() {
   const { isRefreshing, handleRefresh } = useDataRefresh();
 
   return (
@@ -14,15 +11,12 @@ export function TopBar({ title = 'Tokyo Cement' }: TopBarProps) {
       className="fixed top-0 left-0 right-0 z-30 bg-[#0D1F2D] flex items-end px-4 gap-3 lg:hidden"
       style={{
         paddingTop: 'env(safe-area-inset-top)',
-        paddingBottom: '12px',
-        minHeight: 'calc(56px + env(safe-area-inset-top))',
+        paddingBottom: '8px',
+        minHeight: 'calc(60px + env(safe-area-inset-top))',
       }}
     >
-      <div className="flex items-center gap-2 flex-1">
-        <div className="w-6 h-6 bg-accent-500 rounded flex items-center justify-center">
-          <Factory size={14} className="text-white" />
-        </div>
-        <span className="text-white font-semibold text-sm">{title}</span>
+      <div className="flex items-center gap-4 flex-1">
+        <img src="/insee-logo.png" alt="INSEE" className="h-11 w-auto" />
       </div>
 
       <button

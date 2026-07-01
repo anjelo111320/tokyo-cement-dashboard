@@ -17,6 +17,3 @@ export function useIsMobile(): boolean {
   return useMediaQuery('(max-width: 1023px)');
 }
 
-export function useIsDesktop(): boolean {
-  return useMediaQuery('(min-width: 1024px)');
-}

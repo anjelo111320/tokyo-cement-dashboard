@@ -7,15 +7,20 @@ export const queryKeys = {
   systemStatus: () => ['system-status'] as const,
 
   ledger: {
-    kpis:        (plantId?: string, materialId?: string) => ['ledger', 'kpis', plantId ?? 'all', materialId ?? 'all'] as const,
-    flow:        (plantId?: string, materialId?: string) => ['ledger', 'flow', plantId ?? 'all', materialId ?? 'all'] as const,
-    consumption: (plantId?: string, materialId?: string) => ['ledger', 'consumption', plantId ?? 'all', materialId ?? 'all'] as const,
-    transfers:      (plantId?: string, materialId?: string) => ['ledger', 'transfers', plantId ?? 'all', materialId ?? 'all'] as const,
-    plantComparison: (materialId?: string) => ['ledger', 'plant-comparison', materialId ?? 'all'] as const,
-    movements:   (plantId?: string, materialId?: string, objType?: string, category?: string, page?: number) =>
+    kpis:      (plantId?: string, materialId?: string) => ['ledger', 'kpis', plantId ?? 'all', materialId ?? 'all'] as const,
+    transfers: (plantId?: string, materialId?: string) => ['ledger', 'transfers', plantId ?? 'all', materialId ?? 'all'] as const,
+    movements: (plantId?: string, materialId?: string, objType?: string, category?: string, page?: number) =>
       ['ledger', 'movements', plantId ?? 'all', materialId ?? 'all', objType ?? 'all', category ?? 'all', page ?? 1] as const,
-    materials:   () => ['ledger', 'materials'] as const,
-    plants:      () => ['ledger', 'plants'] as const,
+    materials: (plantIds?: string[]) => ['ledger', 'materials', plantIds?.join(',') ?? 'all'] as const,
+    plants:    () => ['ledger', 'plants'] as const,
+  },
+
+  inventory: {
+    summary: (materialIds?: string[], plantIds?: string[]) =>
+      ['inventory', 'summary', materialIds?.join(',') ?? 'all', plantIds?.join(',') ?? 'all'] as const,
+    alerts: (materialIds?: string[]) =>
+      ['inventory', 'alerts', materialIds?.join(',') ?? 'all'] as const,
+    thresholds: () => ['inventory', 'thresholds'] as const,
   },
 
   settings: {

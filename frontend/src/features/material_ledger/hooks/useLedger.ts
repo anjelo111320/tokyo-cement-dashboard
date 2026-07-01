@@ -1,35 +1,11 @@
-import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { materialLedgerService } from '@/services/material_ledger.service';
 import { queryKeys } from '@/constants/queryKeys';
-
-/** Shared filter state used by all Material Ledger components on the page. */
-export function useLedgerFilters() {
-  const [plantId, setPlantId] = useState<string | undefined>(undefined);
-  const [materialId, setMaterialId] = useState<string | undefined>(undefined);
-  return { plantId, setPlantId, materialId, setMaterialId };
-}
 
 export function useLedgerKpis(plantId?: string, materialId?: string) {
   return useQuery({
     queryKey: queryKeys.ledger.kpis(plantId, materialId),
     queryFn: () => materialLedgerService.getKpis(plantId, materialId),
-    staleTime: 5 * 60_000,
-  });
-}
-
-export function useLedgerFlow(plantId?: string, materialId?: string) {
-  return useQuery({
-    queryKey: queryKeys.ledger.flow(plantId, materialId),
-    queryFn: () => materialLedgerService.getInventoryFlow(plantId, materialId),
-    staleTime: 5 * 60_000,
-  });
-}
-
-export function useLedgerConsumption(plantId?: string, materialId?: string) {
-  return useQuery({
-    queryKey: queryKeys.ledger.consumption(plantId, materialId),
-    queryFn: () => materialLedgerService.getConsumption(plantId, materialId),
     staleTime: 5 * 60_000,
   });
 }
@@ -48,14 +24,6 @@ export function useLedgerMovements(
   });
 }
 
-export function usePlantComparison(materialId?: string) {
-  return useQuery({
-    queryKey: queryKeys.ledger.plantComparison(materialId),
-    queryFn: () => materialLedgerService.getPlantComparison(materialId),
-    staleTime: 5 * 60_000,
-  });
-}
-
 export function useLedgerTransfers(plantId?: string, materialId?: string) {
   return useQuery({
     queryKey: queryKeys.ledger.transfers(plantId, materialId),
@@ -64,11 +32,36 @@ export function useLedgerTransfers(plantId?: string, materialId?: string) {
   });
 }
 
-export function useLedgerMaterials() {
+export function useInventorySummary(materialIds?: string[], plantIds?: string[]) {
   return useQuery({
-    queryKey: queryKeys.ledger.materials(),
-    queryFn: () => materialLedgerService.getMaterials(),
+    queryKey: queryKeys.inventory.summary(materialIds, plantIds),
+    queryFn: () => materialLedgerService.getInventorySummary(materialIds, plantIds),
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useInventoryAlerts(materialIds?: string[]) {
+  return useQuery({
+    queryKey: queryKeys.inventory.alerts(materialIds),
+    queryFn: () => materialLedgerService.getInventoryAlerts(materialIds),
+    staleTime: 5 * 60_000,
+    refetchInterval: 60_000,
+  });
+}
+
+export function useThresholds() {
+  return useQuery({
+    queryKey: queryKeys.inventory.thresholds(),
+    queryFn: () => materialLedgerService.getThresholds(),
     staleTime: 30 * 60_000,
+  });
+}
+
+export function useLedgerMaterials(plantIds?: string[]) {
+  return useQuery({
+    queryKey: queryKeys.ledger.materials(plantIds),
+    queryFn: () => materialLedgerService.getMaterials(plantIds),
+    staleTime: 5 * 60_000,
   });
 }
 

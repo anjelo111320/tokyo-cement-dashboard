@@ -36,21 +36,19 @@ from backend.core.material_ledger_config import (
     OUTFLOW_CATEGORIES,
 )
 from backend.schemas.material_ledger import (
-    InventoryFlowSchema,
-    CategoryFlowRow,
-    SupplyChainSchema,
-    SupplyChainNode,
-    ConsumptionBreakdownSchema,
-    ConsumptionCategory,
     MovementRowSchema,
     MaterialSchema,
     PlantSchema,
     LedgerKpiSchema,
     StockTransferRow,
     StockTransferSchema,
-    PlantComparisonRow,
-    PlantComparisonSchema,
+    PlantInventoryRow,
+    InventorySummarySchema,
+    InventoryAlertRow,
+    InventoryAlertsSchema,
+    MaterialThresholdSchema,
 )
+from backend.core.material_ledger_config import MATERIAL_THRESHOLDS as _thresholds_store
 
 
 class MaterialLedgerService:
@@ -116,242 +114,186 @@ class MaterialLedgerService:
             unit=QUANTITY_UNIT,
         )
 
-    # ── Inventory Flow ────────────────────────────────────────────────────────
+    # ── Inventory Dashboard ───────────────────────────────────────────────────
 
-    def get_inventory_flow(
+    def get_inventory_summary(
         self,
-        plant_id: Optional[str] = None,
-        material_id: Optional[str] = None,
-    ) -> InventoryFlowSchema:
+        material_ids: Optional[list[str]] = None,
+        plant_ids: Optional[list[str]] = None,
+    ) -> InventorySummarySchema:
         """
-        Returns the AB → ZU → KB → VN → EB flow for the waterfall chart.
-        Categories are driven entirely by CATEGORY_CONFIG — adding a new
-        category to the config means it appears here automatically.
+        Per-plant inventory breakdown for the new dashboard.
+
+        On hand    = CA + EB rows (physical closing stock)
+        In-Transit OUT = BV + VN + Stock Transfer at factory plants (net positive)
+        In-Transit IN  = BV + ZU + Stock Transfer at depot plants (gross positive)
         """
-        movements = self._ledger.get_movements(
-            plant_id=plant_id,
-            material_id=material_id,
-            obj_type="CA",   # Use accounting entries for the stock flow
-        )
-
-        # Group quantities and prices by category code.
-        by_category: dict[str, float] = {}
-        by_price: dict[str, float] = {}
-        for m in movements:
-            by_category[m.category] = by_category.get(m.category, 0.0) + m.quantity
-            if m.price is not None:
-                by_price[m.category] = by_price.get(m.category, 0.0) + m.price
-
-        # Build the flow rows using config order — unknown categories are appended.
-        known_cats = {
-            code: cfg for code, cfg in sorted(
-                CATEGORY_CONFIG.items(), key=lambda x: x[1]["order"]
-            )
-        }
-        rows: list[CategoryFlowRow] = []
-        for code, cfg in known_cats.items():
-            qty = by_category.get(code, 0.0)
-            price = by_price.get(code)
-            rows.append(CategoryFlowRow(
-                category_code=code,
-                label=cfg["label"],
-                quantity=round(qty, 3),
-                total_price_lkr=round(price, 2) if price is not None else None,
-                sign=cfg["sign"],
-                color=cfg["color"],
-                role=cfg["role"],
-                unit=QUANTITY_UNIT,
-            ))
-
-        # Include any category in the data that is NOT in CATEGORY_CONFIG
-        # (forward-compatible: if SAP adds a new code, it still appears).
-        known_codes = set(CATEGORY_CONFIG.keys())
-        for code, qty in by_category.items():
-            if code not in known_codes:
-                price = by_price.get(code)
-                rows.append(CategoryFlowRow(
-                    category_code=code,
-                    label=code,  # Use the raw code as label until config is updated
-                    quantity=round(qty, 3),
-                    total_price_lkr=round(price, 2) if price is not None else None,
-                    sign=+1,
-                    color="#9CA3AF",
-                    role="unknown",
-                    unit=QUANTITY_UNIT,
-                ))
-
-        return InventoryFlowSchema(rows=rows, unit=QUANTITY_UNIT)
-
-    # ── Consumption Breakdown ─────────────────────────────────────────────────
-
-    def get_consumption_breakdown(
-        self,
-        plant_id: Optional[str] = None,
-        material_id: Optional[str] = None,
-    ) -> ConsumptionBreakdownSchema:
-        """
-        Breaks down VN (Consumption) by Proc Cat Name:
-          Sales Order, Internal Consumption, Stock Transfer…
-
-        Uses PROC_CAT_LABELS for display names — add new labels there,
-        not here, for new procurement categories.
-        """
-        movements = self._ledger.get_movements(
-            plant_id=plant_id,
-            material_id=material_id,
-            obj_type="BV",    # BV = actual physical movements
-            category="VN",
-        )
-
-        by_proc: dict[str, float] = {}
-        for m in movements:
-            key = m.proc_cat_name or "Other"
-            by_proc[key] = by_proc.get(key, 0.0) + m.quantity
-
-        total_qty = sum(by_proc.values())
-        categories = [
-            ConsumptionCategory(
-                proc_cat=raw,
-                label=PROC_CAT_LABELS.get(raw, raw),
-                quantity=round(qty, 3),
-                pct=round(qty / total_qty * 100 if total_qty > 0 else 0, 1),
-                unit=QUANTITY_UNIT,
-            )
-            for raw, qty in sorted(by_proc.items(), key=lambda x: -x[1])
-        ]
-        return ConsumptionBreakdownSchema(
-            total_consumption_mt=round(total_qty, 3),
-            categories=categories,
-            unit=QUANTITY_UNIT,
-        )
-
-    # ── Supply Chain ──────────────────────────────────────────────────────────
-
-    def get_supply_chain(
-        self,
-        material_id: Optional[str] = None,
-    ) -> SupplyChainSchema:
-        """
-        Builds the factory → depot supply chain flow.
-        Factory nodes = plants where ZU contains "Rest(Production)" (production output).
-        Depot nodes = plants that receive stock via Stock Transfer.
-        """
-        # CA-only to avoid double-counting (BV and VM carry the same qty as CA).
-        all_movements = self._ledger.get_movements(material_id=material_id, obj_type="CA")
+        all_movements = self._ledger.get_movements(plant_ids=plant_ids if plant_ids else None)
         plant_masters = {p.plant_id: p for p in self._plants.get_all_plants()}
 
-        # Identify factory plants: plants that have production-type receipts.
-        factory_plant_ids: set[str] = set()
+        # Identify factory plants (those that have Production-type ZU receipts)
+        factory_ids: set[str] = set()
         for m in all_movements:
             if m.category == "ZU" and m.proc_cat_name == "Production":
-                factory_plant_ids.add(m.plant_id)
+                factory_ids.add(m.plant_id)
 
-        # Production total per factory (CA ZU rows only).
-        factory_production: dict[str, float] = {}
-        for m in all_movements:
-            if m.plant_id in factory_plant_ids and m.category == "ZU":
-                factory_production[m.plant_id] = (
-                    factory_production.get(m.plant_id, 0.0) + m.quantity
-                )
+        # Filter by selected materials if provided
+        if material_ids:
+            material_set = set(str(mid) for mid in material_ids)
+            movements = [m for m in all_movements if str(m.material_id) in material_set]
+        else:
+            movements = all_movements
 
-        # Transfer totals from factories to each depot.
-        # In the data, factory VN "Transfer plant:XXXX" → depot ZU "Transfer plant:XXXX"
-        depot_receipts: dict[str, float] = {}
-        for m in all_movements:
-            if m.plant_id not in factory_plant_ids and m.category == "ZU":
-                depot_receipts[m.plant_id] = (
-                    depot_receipts.get(m.plant_id, 0.0) + m.quantity
-                )
+        # Buckets per plant
+        on_hand:         dict[str, float] = {}
+        in_transit_out:  dict[str, float] = {}
+        in_transit_in:   dict[str, float] = {}
 
-        # Depot ending inventory.
-        depot_ending: dict[str, float] = {}
-        for m in all_movements:
-            if m.plant_id not in factory_plant_ids and m.category == "EB":
-                depot_ending[m.plant_id] = (
-                    depot_ending.get(m.plant_id, 0.0) + m.quantity
-                )
-
-        # Build nodes.
-        factory_nodes = [
-            SupplyChainNode(
-                plant_id=pid,
-                name=plant_masters[pid].name if pid in plant_masters else f"Plant {pid}",
-                node_type="factory",
-                production_mt=round(factory_production.get(pid, 0.0), 2),
-                receipts_mt=None,
-                ending_stock_mt=None,
-                city=plant_masters[pid].city if pid in plant_masters else None,
-            )
-            for pid in sorted(factory_plant_ids)
-        ]
-
-        depot_nodes = [
-            SupplyChainNode(
-                plant_id=pid,
-                name=plant_masters[pid].name if pid in plant_masters else f"Plant {pid}",
-                node_type="depot",
-                production_mt=None,
-                receipts_mt=round(depot_receipts.get(pid, 0.0), 2),
-                ending_stock_mt=round(depot_ending.get(pid, 0.0), 2),
-                city=plant_masters[pid].city if pid in plant_masters else None,
-            )
-            for pid in sorted(depot_receipts.keys())
-        ]
-
-        total_produced = sum(factory_production.values())
-        total_transferred = sum(depot_receipts.values())
-
-        return SupplyChainSchema(
-            factories=factory_nodes,
-            depots=depot_nodes,
-            total_produced_mt=round(total_produced, 2),
-            total_transferred_mt=round(total_transferred, 2),
-            unit=QUANTITY_UNIT,
-        )
-
-    # ── Plant Comparison ──────────────────────────────────────────────────────
-
-    def get_plant_comparison(
-        self,
-        material_id: Optional[str] = None,
-    ) -> PlantComparisonSchema:
-        """
-        Returns one row per active plant with AB / ZU / VN / EB totals.
-        CA obj_type only — avoids BV/VM double-counting.
-        Active = any non-zero quantity in the filtered result.
-        Sorted by closing stock descending so the busiest plant is at the top.
-        """
-        movements = self._ledger.get_movements(
-            material_id=material_id,
-            obj_type="CA",
-        )
-        plant_masters = {p.plant_id: p for p in self._plants.get_all_plants()}
-
-        CATS = ("AB", "ZU", "VN", "EB")
-        buckets: dict[str, dict[str, float]] = {}
         for m in movements:
-            if m.plant_id not in buckets:
-                buckets[m.plant_id] = {c: 0.0 for c in CATS}
-            if m.category in CATS:
-                buckets[m.plant_id][m.category] += m.quantity
+            pid = m.plant_id
 
-        rows: list[PlantComparisonRow] = []
-        for pid, cats in buckets.items():
-            if all(v == 0.0 for v in cats.values()):
-                continue                         # skip zero-activity plants
+            # On hand: CA + EB
+            if m.obj_type == "CA" and m.category == "EB":
+                on_hand[pid] = on_hand.get(pid, 0.0) + m.quantity
+
+            # In-transit OUT: BV + VN + Stock Transfer at factory
+            if (m.obj_type == "BV" and m.category == "VN"
+                    and m.proc_cat_name == "Stock Transfer"
+                    and pid in factory_ids
+                    and m.quantity > 0):
+                in_transit_out[pid] = in_transit_out.get(pid, 0.0) + m.quantity
+
+            # In-transit IN: BV + ZU + Stock Transfer at depots
+            if (m.obj_type == "BV" and m.category == "ZU"
+                    and m.proc_cat_name == "Stock Transfer"
+                    and pid not in factory_ids
+                    and m.quantity > 0):
+                in_transit_in[pid] = in_transit_in.get(pid, 0.0) + m.quantity
+
+        # Gather all plant IDs that appear in any bucket
+        all_pids = set(on_hand) | set(in_transit_out) | set(in_transit_in)
+
+        rows: list[PlantInventoryRow] = []
+        alert_count = 0
+        for pid in sorted(all_pids):
             pm = plant_masters.get(pid)
-            rows.append(PlantComparisonRow(
+            oh = round(on_hand.get(pid, 0.0), 3)
+            ito = round(in_transit_out.get(pid, 0.0), 3)
+            iti = round(in_transit_in.get(pid, 0.0), 3)
+
+            # Determine status from threshold (use lowest threshold across materials)
+            threshold = self._lowest_threshold_for_plant(pid, movements)
+            if threshold > 0:
+                if oh == 0:
+                    status = "out"
+                    alert_count += 1
+                elif oh < threshold:
+                    status = "low"
+                    alert_count += 1
+                else:
+                    status = "ok"
+            else:
+                status = "ok"
+
+            rows.append(PlantInventoryRow(
                 plant_id=pid,
                 plant_name=pm.name if pm else f"Plant {pid}",
                 city=pm.city if pm else None,
-                opening_mt=round(cats["AB"], 3),
-                receipts_mt=round(cats["ZU"], 3),
-                consumption_mt=round(cats["VN"], 3),
-                closing_mt=round(cats["EB"], 3),
+                on_hand_mt=oh,
+                in_transit_out_mt=ito,
+                in_transit_in_mt=iti,
+                status=status,
             ))
 
-        rows.sort(key=lambda r: r.closing_mt, reverse=True)
-        return PlantComparisonSchema(plants=rows, unit=QUANTITY_UNIT)
+        # Sort: alerts first, then by on-hand desc
+        rows.sort(key=lambda r: (r.status == "ok", -r.on_hand_mt))
+
+        return InventorySummarySchema(
+            rows=rows,
+            total_on_hand_mt=round(sum(on_hand.values()), 3),
+            total_in_transit_out=round(sum(in_transit_out.values()), 3),
+            total_in_transit_in=round(sum(in_transit_in.values()), 3),
+            alert_count=alert_count,
+            unit=QUANTITY_UNIT,
+        )
+
+    def _lowest_threshold_for_plant(
+        self,
+        plant_id: str,
+        movements: list,
+    ) -> float:
+        """Returns the relevant threshold for the materials seen at this plant."""
+        thresholds = [
+            _thresholds_store.get(str(m.material_id), 0.0)
+            for m in movements
+            if m.plant_id == plant_id and m.obj_type == "CA" and m.category == "EB"
+        ]
+        return max(thresholds) if thresholds else 0.0
+
+    def get_inventory_alerts(
+        self,
+        material_ids: Optional[list[str]] = None,
+    ) -> InventoryAlertsSchema:
+        """Returns all plants where on-hand stock is below the configured threshold."""
+        movements = self._ledger.get_movements(obj_type="CA", category="EB")
+        plant_masters = {p.plant_id: p for p in self._plants.get_all_plants()}
+
+        if material_ids:
+            material_set = set(str(mid) for mid in material_ids)
+            movements = [m for m in movements if str(m.material_id) in material_set]
+
+        alerts: list[InventoryAlertRow] = []
+        seen: set[tuple[str, str]] = set()
+
+        for m in movements:
+            threshold = _thresholds_store.get(str(m.material_id), 0.0)
+            if threshold <= 0:
+                continue
+            if m.quantity >= threshold:
+                continue
+            key = (m.plant_id, str(m.material_id))
+            if key in seen:
+                continue
+            seen.add(key)
+
+            pct = round((m.quantity / threshold) * 100, 1) if threshold > 0 else 0.0
+            status = "out" if m.quantity <= 0 else "low"
+            pm = plant_masters.get(m.plant_id)
+
+            alerts.append(InventoryAlertRow(
+                plant_id=m.plant_id,
+                plant_name=pm.name if pm else f"Plant {m.plant_id}",
+                city=pm.city if pm else None,
+                material_id=str(m.material_id),
+                material_desc=m.material_description,
+                on_hand_mt=round(m.quantity, 3),
+                threshold_mt=threshold,
+                pct=min(100.0, pct),
+                status=status,
+            ))
+
+        alerts.sort(key=lambda a: a.pct)
+        return InventoryAlertsSchema(alerts=alerts, unit=QUANTITY_UNIT)
+
+    def get_material_thresholds(self) -> list[MaterialThresholdSchema]:
+        """Returns all configured thresholds with material descriptions."""
+        materials = {str(m["material_id"]): str(m.get("material_description", ""))
+                     for m in self._ledger.get_unique_materials()}
+        return [
+            MaterialThresholdSchema(
+                material_id=mid,
+                material_desc=materials.get(mid, mid),
+                min_stock_mt=val,
+            )
+            for mid, val in _thresholds_store.items()
+        ]
+
+    def set_material_threshold(self, material_id: str, min_stock_mt: float) -> None:
+        """Updates the in-memory threshold for a material (no restart needed)."""
+        if min_stock_mt <= 0:
+            _thresholds_store.pop(material_id, None)
+        else:
+            _thresholds_store[material_id] = min_stock_mt
 
     # ── Stock Transfers ───────────────────────────────────────────────────────
 
@@ -367,8 +309,8 @@ class MaterialLedgerService:
           movement_description = "{material_id} {dest_plant_id}"
         so the destination plant is the last whitespace-separated token.
 
-        The source plant is the plant_id of the row itself.
-        Plant names are resolved from the plant master CSV.
+        Also includes material info and the destination plant's closing stock
+        for that material so the frontend can show stock status.
         """
         movements = self._ledger.get_movements(
             plant_id=plant_id,
@@ -377,6 +319,13 @@ class MaterialLedgerService:
             category="VN",
         )
         plant_masters = {p.plant_id: p for p in self._plants.get_all_plants()}
+
+        # Build closing stock lookup: (plant_id, material_id) → closing qty
+        eb_movements = self._ledger.get_movements(obj_type="CA", category="EB")
+        closing_stock: dict[tuple[str, str], float] = {}
+        for m in eb_movements:
+            key = (m.plant_id, m.material_id)
+            closing_stock[key] = closing_stock.get(key, 0.0) + m.quantity
 
         rows: list[StockTransferRow] = []
         for m in movements:
@@ -389,13 +338,17 @@ class MaterialLedgerService:
 
             src = plant_masters.get(m.plant_id)
             dst = plant_masters.get(dest_id)
+            dest_close = round(closing_stock.get((dest_id, m.material_id), 0.0), 3)
 
             rows.append(StockTransferRow(
                 source_plant_id=m.plant_id,
                 source_plant_name=src.name if src else f"Plant {m.plant_id}",
                 dest_plant_id=dest_id,
                 dest_plant_name=dst.name if dst else f"Plant {dest_id}",
+                material_id=m.material_id,
+                material_description=m.material_description,
                 quantity=round(m.quantity, 3),
+                dest_closing_stock=dest_close,
                 price_lkr=round(m.price, 2) if m.price is not None else None,
                 unit=QUANTITY_UNIT,
             ))
@@ -450,13 +403,30 @@ class MaterialLedgerService:
 
     # ── Reference data ────────────────────────────────────────────────────────
 
-    def get_materials(self) -> list[MaterialSchema]:
-        """Distinct materials available for the filter dropdown."""
-        raw = self._ledger.get_unique_materials()
+    def get_materials(self, plant_ids: Optional[list[str]] = None) -> list[MaterialSchema]:
+        """Distinct materials for the filter dropdown.
+        If plant_ids is provided, only materials at those plants are returned,
+        and closing_stock_mt is the sum of EB rows at those plants.
+        """
+        raw = self._ledger.get_unique_materials(plant_ids=plant_ids or None)
+
+        # Compute per-material closing stock (CA + EB rows at the plant scope)
+        eb_movements = self._ledger.get_movements(
+            obj_type="CA",
+            category="EB",
+            plant_ids=plant_ids if plant_ids else None,
+        )
+        closing_by_material: dict[str, float] = {}
+        for m in eb_movements:
+            closing_by_material[m.material_id] = (
+                closing_by_material.get(m.material_id, 0.0) + m.quantity
+            )
+
         return [
             MaterialSchema(
                 material_id=str(r.get("material_id", "")),
                 material_description=str(r.get("material_description", "")),
+                closing_stock_mt=round(closing_by_material.get(str(r.get("material_id", "")), 0.0), 3),
             )
             for r in raw
         ]

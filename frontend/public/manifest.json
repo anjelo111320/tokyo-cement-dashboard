@@ -1,7 +1,7 @@
 {
-  "name": "ConcreteOps Dashboard",
-  "short_name": "ConcreteOps",
-  "description": "Concrete Manufacturing Analytics Dashboard",
+  "name": "INSEE Analytics",
+  "short_name": "INSEE",
+  "description": "INSEE Inventory & Plant Analytics Dashboard",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

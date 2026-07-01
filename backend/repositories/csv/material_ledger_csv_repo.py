@@ -44,6 +44,7 @@ class MaterialLedgerCsvRepository:
         material_id: Optional[str] = None,
         obj_type: Optional[str] = None,
         category: Optional[str] = None,
+        plant_ids: Optional[list[str]] = None,
     ) -> list[MaterialMovement]:
         """
         Returns movement records filtered by any combination of:
@@ -66,9 +67,17 @@ class MaterialLedgerCsvRepository:
         }
         df = df.rename(columns=rename_map)
 
-        # Coerce quantity and price to numeric — the CSV may store them as strings.
+        # Coerce quantity to numeric.
+        # SAP exports reversal entries with a trailing minus: "60-" means -60.
+        # Standard pd.to_numeric cannot parse this format, so we convert first.
         if "quantity" in df.columns:
-            df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce").fillna(0.0)
+            q = df["quantity"].astype(str).str.strip()
+            q = q.str.replace(",", "", regex=False)
+            # trailing minus: "60-" → "-60", "5.500-" → "-5.500"
+            q = q.str.replace(r"^(\d+\.?\d*)-$", r"-\1", regex=True)
+            df["quantity"] = pd.to_numeric(q, errors="coerce").fillna(0.0)
+
+        # Coerce price to numeric — strip thousand-separator commas first.
         if "price" in df.columns:
             df["price"] = pd.to_numeric(
                 df["price"].astype(str).str.replace(",", "", regex=False),
@@ -76,13 +85,20 @@ class MaterialLedgerCsvRepository:
             )
 
         # Coerce plant_id and material_id to string so filters are type-safe.
+        # Pandas may read numeric IDs as floats ("2114.0") — strip the decimal part.
         if "plant_id" in df.columns:
-            df["plant_id"] = df["plant_id"].astype(str).str.strip()
+            df["plant_id"] = (
+                df["plant_id"].astype(str).str.strip().str.split(".").str[0]
+            )
+            # Drop blank/separator rows (e.g. "----" footer rows from SAP exports)
+            df = df[df["plant_id"].str.match(r"^\d+$")]
         if "material_id" in df.columns:
             df["material_id"] = df["material_id"].astype(str).str.strip()
 
         # ── Vectorised filters (applied on the full DataFrame — fast) ──────────
-        if plant_id:
+        if plant_ids:
+            df = df[df["plant_id"].isin([str(p) for p in plant_ids])]
+        elif plant_id:
             df = df[df["plant_id"] == str(plant_id)]
         if material_id:
             df = df[df["material_id"] == str(material_id)]
@@ -125,24 +141,41 @@ class MaterialLedgerCsvRepository:
 
         return movements
 
-    def get_unique_materials(self) -> list[dict]:
-        """Returns a deduplicated list of material_id + description pairs."""
+    def get_unique_materials(self, plant_ids: Optional[list[str]] = None) -> list[dict]:
+        """Returns a deduplicated list of material_id + description pairs.
+        If plant_ids is provided, returns only materials that appear at those plants.
+        """
         df = csv_cache.get("material_ledger")
+        plant_col = COLUMN_MAP.get("plant_id", "Plant")
         mid_col = COLUMN_MAP.get("material_id", "Material")
         mdesc_col = COLUMN_MAP.get("material_description", "Material Description")
         if mid_col not in df.columns:
             return []
+
+        if plant_ids and plant_col in df.columns:
+            pid_series = df[plant_col].astype(str).str.strip().str.split(".").str[0]
+            df = df[pid_series.isin([str(p) for p in plant_ids])]
+
         cols = [mid_col] + ([mdesc_col] if mdesc_col in df.columns else [])
         unique = df[cols].drop_duplicates()
         return unique.rename(columns={mid_col: "material_id", mdesc_col: "material_description"}).to_dict("records")
 
     def get_unique_plants(self) -> list[str]:
-        """Returns all unique plant_id values in the ledger data."""
+        """Returns all unique plant_id values in the ledger data.
+        Strips decimal suffix so pandas float reads ("2114.0") match
+        plant master IDs ("2114").
+        """
         df = csv_cache.get("material_ledger")
         col = COLUMN_MAP.get("plant_id", "Plant")
         if col not in df.columns:
             return []
-        return df[col].dropna().astype(str).str.strip().unique().tolist()
+        return (
+            df[col].dropna().astype(str).str.strip()
+            .str.split(".").str[0]           # "2114.0" → "2114"
+            .str.strip()
+            .loc[lambda s: s.str.match(r"^\d+$")]  # drop blank/separator rows
+            .unique().tolist()
+        )
 
 
 def _parse_lat_lng(raw: str) -> tuple[Optional[float], Optional[float]]:
