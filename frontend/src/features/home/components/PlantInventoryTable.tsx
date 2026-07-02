@@ -74,9 +74,10 @@ function PlantDetailModal({
     );
 
   const MAT_STYLE: Record<MatStatus, { bg: string; border: string; badge: string; badgeCls: string; idCls: string }> = {
-    out: { bg: 'bg-red-50',    border: 'border-red-200',   badge: '✕ Out',  badgeCls: 'bg-red-100 text-red-700',     idCls: 'text-red-400'    },
-    low: { bg: 'bg-amber-50',  border: 'border-amber-200', badge: '⚠ Low',  badgeCls: 'bg-amber-100 text-amber-700', idCls: 'text-amber-500'  },
-    ok:  { bg: 'bg-gray-50',   border: 'border-gray-100',  badge: '',        badgeCls: '',                            idCls: 'text-[#2E6B8A]'  },
+    out:  { bg: 'bg-red-50',    border: 'border-red-200',   badge: '✕ Out',  badgeCls: 'bg-red-100 text-red-700',     idCls: 'text-red-400'    },
+    low:  { bg: 'bg-amber-50',  border: 'border-amber-200', badge: '⚠ Low',  badgeCls: 'bg-amber-100 text-amber-700', idCls: 'text-amber-500'  },
+    ok:   { bg: 'bg-gray-50',   border: 'border-gray-100',  badge: '',        badgeCls: '',                            idCls: 'text-[#2E6B8A]'  },
+    skip: { bg: 'bg-gray-50',   border: 'border-gray-100',  badge: '',        badgeCls: '',                            idCls: 'text-gray-400'   },
   };
 
   // Fetch all transfers once (cached), then split by direction for this plant
