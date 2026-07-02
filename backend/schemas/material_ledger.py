@@ -66,6 +66,7 @@ class MaterialSchema(BaseModel):
     material_id:          str
     material_description: str
     closing_stock_mt:     float = 0.0
+    ever_stocked:         bool  = False  # True if plant has ever had AB or ZU > 0 for this material
 
 
 class PlantSchema(BaseModel):
@@ -114,6 +115,7 @@ class InventoryAlertRow(BaseModel):
     threshold_mt:  float
     pct:           float    # on_hand / threshold × 100, capped at 100
     status:        str      # "low" | "out"
+    ever_stocked:  bool = True  # False if this plant never had non-zero stock for this material
 
 
 class InventoryAlertsSchema(BaseModel):
@@ -125,3 +127,64 @@ class MaterialThresholdSchema(BaseModel):
     material_id:   str
     material_desc: str
     min_stock_mt:  float
+
+
+# ── Inventory Report schemas ──────────────────────────────────────────────────
+
+class PlantReportRow(BaseModel):
+    """One plant row inside a material report card."""
+    plant_id:                  str
+    plant_name:                str
+    city:                      Optional[str] = None
+    on_hand_mt:                float   # Inventory with in-transit (CA+EB)
+    transit_out_mt:            float   # Transit OUT: BV+VN+Stock Transfer at factories
+    transit_in_mt:             float   # Transit IN:  BV+ZU+Stock Transfer at depots
+    net_transit_mt:            float   # transit_out - transit_in (negative = net inflow)
+    inventory_without_transit: float   # on_hand + transit_in - transit_out
+
+
+class MaterialReportCard(BaseModel):
+    """One material card containing all plant rows."""
+    material_id:                       str
+    material_description:              str
+    plants:                            list[PlantReportRow]
+    total_on_hand:                     float
+    total_transit_out:                 float
+    total_transit_in:                  float
+    total_inventory_without_transit:   float
+
+
+class InventoryReportSchema(BaseModel):
+    materials: list[MaterialReportCard]
+    unit:      str
+
+
+# ── Location Summary schemas ──────────────────────────────────────────────────
+
+class BrandGroupStockSchema(BaseModel):
+    stock:      float   # closing stock MT (EB rows)
+    dispatch:   float   # period dispatch MT (BV/VN Sales Order rows)
+    transit_in: float   # incoming in-transit MT (BV/ZU Stock Transfer rows)
+
+
+class LocationSummaryRow(BaseModel):
+    location_id:    str
+    location_label: str
+    brands:         dict[str, BrandGroupStockSchema]  # keyed by brand_id
+    total_stock:    float
+    total_dispatch: float
+    inventory_days: Optional[float] = None  # None when no date data in CSV
+
+
+class BrandGroupMetaSchema(BaseModel):
+    id:       str
+    label:    str
+    has_data: bool  # True if any location has non-zero stock or dispatch
+
+
+class LocationSummarySchema(BaseModel):
+    locations:     list[LocationSummaryRow]
+    totals:        LocationSummaryRow
+    brand_groups:  list[BrandGroupMetaSchema]
+    has_date_data: bool
+    unit:          str   # "MT" — frontend applies display conversion

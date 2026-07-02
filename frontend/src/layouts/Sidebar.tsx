@@ -9,7 +9,7 @@ import { useDataRefresh } from '@/hooks/useDataRefresh';
 const NAV_ITEMS = [
   { to: ROUTES.HOME,     icon: LayoutDashboard, label: 'Dashboard' },
   { to: ROUTES.MAP,      icon: Map,             label: 'Plant Map' },
-  { to: ROUTES.LEDGER,   icon: FileBarChart2,   label: 'Report' },
+  { to: ROUTES.LEDGER,   icon: FileBarChart2,   label: 'Stock Sheet' },
   { to: ROUTES.SETTINGS, icon: Settings,        label: 'Settings' },
 ];
 
@@ -32,7 +32,7 @@ export function Sidebar() {
         {/* Logo */}
         <div className="px-5 py-4 border-b border-[#1B3550]">
           <img src="/insee-logo.png" alt="INSEE" className="h-7 w-auto" />
-          <p className="text-[#5BA5C2] text-[9px] mt-2 font-semibold tracking-widest uppercase">Analytics Platform</p>
+          <p className="text-[#5BA5C2] text-[9px] mt-2 font-semibold tracking-widest uppercase">Finished Goods Inventory Hub</p>
         </div>
 
         {/* Nav items */}

@@ -20,6 +20,7 @@ Used by:
   api/v1/material_ledger.py → all endpoints
 """
 
+import re
 from typing import Optional
 from backend.repositories.csv.material_ledger_csv_repo import (
     MaterialLedgerCsvRepository,
@@ -47,8 +48,97 @@ from backend.schemas.material_ledger import (
     InventoryAlertRow,
     InventoryAlertsSchema,
     MaterialThresholdSchema,
+    PlantReportRow,
+    MaterialReportCard,
+    InventoryReportSchema,
+    LocationSummarySchema,
+    LocationSummaryRow,
+    BrandGroupStockSchema,
+    BrandGroupMetaSchema,
 )
 from backend.core.material_ledger_config import MATERIAL_THRESHOLDS as _thresholds_store
+
+
+# ── Location → plant ID groups ─────────────────────────────────────────────────
+_LOCATION_GROUPS: list[dict] = [
+    {"id": "PCW",              "primary": "2140", "plant_ids": {"2140", "2120", "2143"}},
+    {"id": "RCW",              "primary": "2141", "plant_ids": {"2141", "2121", "2145", "2125"}},
+    {"id": "ELC_Colombo",      "primary": "2110", "plant_ids": {"2110", "2126", "2146"}},
+    {"id": "ELC_Kurunegala",   "primary": "2111", "plant_ids": {"2111"}},
+    {"id": "ELC_Trincomalee",  "primary": "2112", "plant_ids": {"2112", "2142"}},
+    {"id": "ELC_Kelaniya",     "primary": "2113", "plant_ids": {"2113"}},
+    {"id": "ELC_Kadawatha",    "primary": "2114", "plant_ids": {"2114", "2129"}},
+    {"id": "ELC_Nuwara_Eliya", "primary": "2116", "plant_ids": {"2116"}},
+    {"id": "ELC_Piliyandala",  "primary": "2115", "plant_ids": {"2115"}},
+    {"id": "ELC_Hambantota",   "primary": "2117", "plant_ids": {"2117", "2127"}},
+    {"id": "ELC_Kandy",        "primary": "2118", "plant_ids": {"2118"}},
+    {"id": "Watagoda_3RC",     "primary": "2130", "plant_ids": {"2130"}},
+    {"id": "ELC_Badulla",      "primary": "2119", "plant_ids": {"2119"}},
+]
+
+# ── Brand group definitions ────────────────────────────────────────────────────
+_BRAND_GROUPS: list[dict] = [
+    {"id": "sanstha",          "label": "Sanstha"},
+    {"id": "mmc_plus",         "label": "MMC Plus"},
+    {"id": "marine_composite", "label": "Marine Composite"},
+    {"id": "mahamera",         "label": "Mahamera"},
+    {"id": "rapid_flow",       "label": "Rapid Flow"},
+    {"id": "extra",            "label": "Extra"},
+    {"id": "supiri",           "label": "Supiri"},
+    {"id": "ambuja",           "label": "Ambuja"},
+    {"id": "fiberbond",        "label": "Fiberbond"},
+]
+
+
+def _classify_brand(desc: str) -> Optional[str]:
+    """Map material description to a brand group id. Order matters: most specific first."""
+    d = desc.lower()
+    if "mahamera" in d:                                                               return "mahamera"
+    if "marine" in d and ("v-l" in d or "s-l" in d or "marine plus_" in d):          return "marine_composite"
+    if "mahaweli marine" in d or "marine cement" in d or "mm+ " in d:                return "mmc_plus"
+    if "sanstha" in d:                                                                return "sanstha"
+    # Holcim Ready Flow (old branding) merges into Rapid Flow
+    if "rapid flow" in d or "ready flow" in d or "readyflow" in d:                   return "rapid_flow"
+    if "extra" in d:                                                                  return "extra"
+    if "supiri" in d:                                                                 return "supiri"
+    if "ambuja" in d:                                                                 return "ambuja"
+    if "fiberbond" in d:                                                              return "fiberbond"
+    # Damage, scrap, clinker — excluded
+    return None
+
+
+def _material_is_bag(desc: str) -> bool:
+    return "bulk" not in desc.lower()
+
+
+def _material_is_bulk(desc: str) -> bool:
+    return "bulk" in desc.lower()
+
+
+def _normalize_material_desc(desc: str) -> str:
+    """
+    Normalize inconsistent dash separators in SAP material descriptions.
+
+    SAP exports use at least three dash styles for the brand/plant separator:
+      "Brand - Variant"   (space-dash-space)  — standard
+      "Brand- Variant"    (dash-space)         — missing leading space
+      "Brand -Variant"    (space-dash)         — missing trailing space
+      "Brand-Variant"     (no spaces)          — fully missing spaces
+
+    We normalise all three non-standard styles to " - ".
+    Single-letter-dash-single-letter sequences (e.g. "V-L", "S-L") are kept
+    intact because they are product-type codes, not separators.
+    """
+    # "Brand- Variant": dash immediately before whitespace, no leading space
+    desc = re.sub(r'(?<=[A-Za-z0-9\)])-\s+', ' - ', desc)
+    # "Brand -Variant": whitespace immediately before dash, no trailing space
+    desc = re.sub(r'\s+-(?=[A-Za-z0-9])', ' - ', desc)
+    # "Brand-Variant": no spaces, but only when the right side is a multi-char
+    # word starting with uppercase OR starts with a digit (plant codes, e.g. PCW,
+    # Puttalam, Ruhunu, 50kg) — avoids breaking "V-L" / "S-L" (single-letter right side)
+    desc = re.sub(r'(?<=[A-Za-z0-9\)])-(?=[A-Z]{2,}|[A-Z][a-z]|[0-9])', ' - ', desc)
+    # Collapse any double spaces introduced above
+    return re.sub(r'  +', ' ', desc).strip()
 
 
 class MaterialLedgerService:
@@ -120,6 +210,7 @@ class MaterialLedgerService:
         self,
         material_ids: Optional[list[str]] = None,
         plant_ids: Optional[list[str]] = None,
+        zero_stock_mode: str = "accurate",
     ) -> InventorySummarySchema:
         """
         Per-plant inventory breakdown for the new dashboard.
@@ -173,25 +264,55 @@ class MaterialLedgerService:
         # Gather all plant IDs that appear in any bucket
         all_pids = set(on_hand) | set(in_transit_out) | set(in_transit_in)
 
+        # Sum closing stock per (plant, material) so we compare each material
+        # individually against its own threshold — not the plant total vs one value.
+        per_mat_stock: dict[tuple[str, str], float] = {}
+        for m in movements:
+            if m.obj_type == "CA" and m.category == "EB":
+                key = (m.plant_id, str(m.material_id))
+                per_mat_stock[key] = per_mat_stock.get(key, 0.0) + m.quantity
+
+        # Option B (accurate): build the set of plant-material pairs that have
+        # ever received opening stock (AB) or a receipt (ZU) — meaning the plant
+        # actually carries that material.  A zero EB without any prior AB/ZU means
+        # the plant simply doesn't stock that product, so we skip it.
+        # Option A (active_only): skip this check entirely; instead only flag
+        # pairs where 0 < stock < threshold (never flag stock == 0 as "out").
+        ever_stocked: set[tuple[str, str]] = set()
+        if zero_stock_mode == "accurate":
+            for m in movements:
+                if m.obj_type == "CA" and m.category in ("AB", "ZU") and m.quantity > 0:
+                    ever_stocked.add((m.plant_id, str(m.material_id)))
+
+        alert_plant_ids: set[str] = set()
+        out_plant_ids:   set[str] = set()
+        for (plant_id, material_id), stock in per_mat_stock.items():
+            threshold = _thresholds_store.get(material_id, 0.0)
+            if threshold <= 0:
+                continue
+
+            if zero_stock_mode == "accurate":
+                if (plant_id, material_id) not in ever_stocked:
+                    continue  # plant never stocked this material — not a real alert
+                if stock < threshold:
+                    alert_plant_ids.add(plant_id)
+                    if stock <= 0:
+                        out_plant_ids.add(plant_id)
+            else:  # active_only: only flag genuinely low, never flag zero
+                if 0 < stock < threshold:
+                    alert_plant_ids.add(plant_id)
+
         rows: list[PlantInventoryRow] = []
-        alert_count = 0
         for pid in sorted(all_pids):
             pm = plant_masters.get(pid)
-            oh = round(on_hand.get(pid, 0.0), 3)
+            oh  = round(on_hand.get(pid, 0.0), 3)
             ito = round(in_transit_out.get(pid, 0.0), 3)
             iti = round(in_transit_in.get(pid, 0.0), 3)
 
-            # Determine status from threshold (use lowest threshold across materials)
-            threshold = self._lowest_threshold_for_plant(pid, movements)
-            if threshold > 0:
-                if oh == 0:
-                    status = "out"
-                    alert_count += 1
-                elif oh < threshold:
-                    status = "low"
-                    alert_count += 1
-                else:
-                    status = "ok"
+            if pid in out_plant_ids:
+                status = "out"
+            elif pid in alert_plant_ids:
+                status = "low"
             else:
                 status = "ok"
 
@@ -213,28 +334,16 @@ class MaterialLedgerService:
             total_on_hand_mt=round(sum(on_hand.values()), 3),
             total_in_transit_out=round(sum(in_transit_out.values()), 3),
             total_in_transit_in=round(sum(in_transit_in.values()), 3),
-            alert_count=alert_count,
+            alert_count=len(alert_plant_ids),
             unit=QUANTITY_UNIT,
         )
 
-    def _lowest_threshold_for_plant(
-        self,
-        plant_id: str,
-        movements: list,
-    ) -> float:
-        """Returns the relevant threshold for the materials seen at this plant."""
-        thresholds = [
-            _thresholds_store.get(str(m.material_id), 0.0)
-            for m in movements
-            if m.plant_id == plant_id and m.obj_type == "CA" and m.category == "EB"
-        ]
-        return max(thresholds) if thresholds else 0.0
 
     def get_inventory_alerts(
         self,
         material_ids: Optional[list[str]] = None,
     ) -> InventoryAlertsSchema:
-        """Returns all plants where on-hand stock is below the configured threshold."""
+        """Returns all plant-material pairs where summed closing stock is below threshold."""
         movements = self._ledger.get_movements(obj_type="CA", category="EB")
         plant_masters = {p.plant_id: p for p in self._plants.get_all_plants()}
 
@@ -242,34 +351,50 @@ class MaterialLedgerService:
             material_set = set(str(mid) for mid in material_ids)
             movements = [m for m in movements if str(m.material_id) in material_set]
 
-        alerts: list[InventoryAlertRow] = []
-        seen: set[tuple[str, str]] = set()
-
+        # Aggregate: sum all EB rows per (plant_id, material_id) before comparing.
+        # The CSV may have multiple EB rows for the same plant+material; using only
+        # the first row (as the old seen-set approach did) gives wrong closing stock.
+        totals: dict[tuple[str, str], float] = {}
+        meta: dict[tuple[str, str], object] = {}
         for m in movements:
-            threshold = _thresholds_store.get(str(m.material_id), 0.0)
+            key = (m.plant_id, str(m.material_id))
+            totals[key] = totals.get(key, 0.0) + m.quantity
+            if key not in meta:
+                meta[key] = m  # keep first row for description / plant lookup
+
+        # Build ever_stocked from AB (opening balance) and ZU (receipts) rows —
+        # same logic as get_inventory_summary.  EB=0 means "ran out", not "never
+        # stocked"; checking AB/ZU correctly distinguishes the two cases.
+        ever_stocked: set[tuple[str, str]] = set()
+        for m in self._ledger.get_movements(obj_type="CA"):
+            if m.category in ("AB", "ZU") and m.quantity > 0:
+                ever_stocked.add((m.plant_id, str(m.material_id)))
+
+        alerts: list[InventoryAlertRow] = []
+        for (plant_id, material_id), total_qty in totals.items():
+            threshold = _thresholds_store.get(material_id, 0.0)
             if threshold <= 0:
                 continue
-            if m.quantity >= threshold:
+            if total_qty >= threshold:
                 continue
-            key = (m.plant_id, str(m.material_id))
-            if key in seen:
-                continue
-            seen.add(key)
 
-            pct = round((m.quantity / threshold) * 100, 1) if threshold > 0 else 0.0
-            status = "out" if m.quantity <= 0 else "low"
-            pm = plant_masters.get(m.plant_id)
+            m = meta[(plant_id, material_id)]
+            pct = round((total_qty / threshold) * 100, 1)
+            status = "out" if total_qty <= 0 else "low"
+            pm = plant_masters.get(plant_id)
+            key = (plant_id, material_id)
 
             alerts.append(InventoryAlertRow(
-                plant_id=m.plant_id,
-                plant_name=pm.name if pm else f"Plant {m.plant_id}",
+                plant_id=plant_id,
+                plant_name=pm.name if pm else f"Plant {plant_id}",
                 city=pm.city if pm else None,
-                material_id=str(m.material_id),
+                material_id=material_id,
                 material_desc=m.material_description,
-                on_hand_mt=round(m.quantity, 3),
+                on_hand_mt=round(total_qty, 3),
                 threshold_mt=threshold,
                 pct=min(100.0, pct),
                 status=status,
+                ever_stocked=key in ever_stocked,
             ))
 
         alerts.sort(key=lambda a: a.pct)
@@ -321,11 +446,16 @@ class MaterialLedgerService:
         plant_masters = {p.plant_id: p for p in self._plants.get_all_plants()}
 
         # Build closing stock lookup: (plant_id, material_id) → closing qty
+        # Also build material description lookup from EB rows, since VM/VN rows
+        # in the SAP CSV often have an empty material_description column.
         eb_movements = self._ledger.get_movements(obj_type="CA", category="EB")
         closing_stock: dict[tuple[str, str], float] = {}
+        material_desc_lookup: dict[str, str] = {}
         for m in eb_movements:
             key = (m.plant_id, m.material_id)
             closing_stock[key] = closing_stock.get(key, 0.0) + m.quantity
+            if m.material_id not in material_desc_lookup and m.material_description:
+                material_desc_lookup[m.material_id] = m.material_description
 
         rows: list[StockTransferRow] = []
         for m in movements:
@@ -340,13 +470,14 @@ class MaterialLedgerService:
             dst = plant_masters.get(dest_id)
             dest_close = round(closing_stock.get((dest_id, m.material_id), 0.0), 3)
 
+            mdesc = m.material_description or material_desc_lookup.get(m.material_id, m.material_id)
             rows.append(StockTransferRow(
                 source_plant_id=m.plant_id,
                 source_plant_name=src.name if src else f"Plant {m.plant_id}",
                 dest_plant_id=dest_id,
                 dest_plant_name=dst.name if dst else f"Plant {dest_id}",
                 material_id=m.material_id,
-                material_description=m.material_description,
+                material_description=mdesc,
                 quantity=round(m.quantity, 3),
                 dest_closing_stock=dest_close,
                 price_lkr=round(m.price, 2) if m.price is not None else None,
@@ -422,14 +553,305 @@ class MaterialLedgerService:
                 closing_by_material.get(m.material_id, 0.0) + m.quantity
             )
 
+        # Option B flag: material is "ever stocked" at these plants if it has
+        # ever had an opening balance (AB) or receipt (ZU) with qty > 0.
+        # Zero-EB materials without this history are not real stockouts.
+        history_movements = self._ledger.get_movements(
+            obj_type="CA",
+            plant_ids=plant_ids if plant_ids else None,
+        )
+        ever_stocked_ids: set[str] = {
+            m.material_id
+            for m in history_movements
+            if m.category in ("AB", "ZU") and m.quantity > 0
+        }
+
         return [
             MaterialSchema(
                 material_id=str(r.get("material_id", "")),
-                material_description=str(r.get("material_description", "")),
+                material_description=_normalize_material_desc(str(r.get("material_description", ""))),
                 closing_stock_mt=round(closing_by_material.get(str(r.get("material_id", "")), 0.0), 3),
+                ever_stocked=str(r.get("material_id", "")) in ever_stocked_ids,
             )
             for r in raw
         ]
+
+    def get_inventory_report(
+        self,
+        material_ids: Optional[list[str]] = None,
+        plant_ids:    Optional[list[str]] = None,
+    ) -> InventoryReportSchema:
+        """
+        Per-material, per-plant breakdown matching the CSV report structure.
+
+        Columns per plant row:
+          on_hand_mt                — Inventory with in-transit (CA+EB closing stock)
+          transit_out_mt            — Transit OUT (BV+VN+Stock Transfer at factory plants)
+          transit_in_mt             — Transit IN  (BV+ZU+Stock Transfer at depot plants)
+          net_transit_mt            — transit_out − transit_in (negative = net inflow)
+          inventory_without_transit — on_hand + transit_in − transit_out
+        """
+        all_movements = self._ledger.get_movements(
+            plant_ids=plant_ids if plant_ids else None,
+        )
+        all_plants    = self._plants.get_all_plants()
+        plant_masters = {p.plant_id: p for p in all_plants}
+
+        # Identify factory plants (have Production-type ZU receipts)
+        factory_ids: set[str] = set()
+        for m in all_movements:
+            if m.category == "ZU" and m.proc_cat_name == "Production":
+                factory_ids.add(m.plant_id)
+
+        # Filter movements to requested materials
+        if material_ids:
+            material_set = set(str(mid) for mid in material_ids)
+            movements = [m for m in all_movements if str(m.material_id) in material_set]
+        else:
+            movements = all_movements
+
+        # Collect all unique materials in scope, preserving first-seen description
+        materials_meta: dict[str, str] = {}
+        for m in movements:
+            mid = str(m.material_id)
+            if mid not in materials_meta:
+                materials_meta[mid] = m.material_description
+
+        # Per (material_id, plant_id) buckets
+        on_hand:     dict[tuple[str, str], float] = {}
+        transit_out: dict[tuple[str, str], float] = {}
+        transit_in:  dict[tuple[str, str], float] = {}
+
+        for m in movements:
+            mid = str(m.material_id)
+            pid = m.plant_id
+            key = (mid, pid)
+
+            if m.obj_type == "CA" and m.category == "EB":
+                on_hand[key] = on_hand.get(key, 0.0) + m.quantity
+
+            if (m.obj_type == "BV" and m.category == "VN"
+                    and m.proc_cat_name == "Stock Transfer"
+                    and pid in factory_ids and m.quantity > 0):
+                transit_out[key] = transit_out.get(key, 0.0) + m.quantity
+
+            if (m.obj_type == "BV" and m.category == "ZU"
+                    and m.proc_cat_name == "Stock Transfer"
+                    and pid not in factory_ids and m.quantity > 0):
+                transit_in[key] = transit_in.get(key, 0.0) + m.quantity
+
+        # All plant IDs in order — use plant master list so every plant appears
+        plant_order = [p.plant_id for p in all_plants]
+
+        report_cards: list[MaterialReportCard] = []
+        for mid, mdesc in sorted(materials_meta.items()):
+            plant_rows: list[PlantReportRow] = []
+            for pid in plant_order:
+                key  = (mid, pid)
+                oh   = round(on_hand.get(key, 0.0), 3)
+                tout = round(transit_out.get(key, 0.0), 3)
+                tin  = round(transit_in.get(key, 0.0), 3)
+                net  = round(tout - tin, 3)
+                wo   = round(oh + tin - tout, 3)
+                pm   = plant_masters.get(pid)
+                plant_rows.append(PlantReportRow(
+                    plant_id=pid,
+                    plant_name=pm.name if pm else f"Plant {pid}",
+                    city=pm.city if pm else None,
+                    on_hand_mt=oh,
+                    transit_out_mt=tout,
+                    transit_in_mt=tin,
+                    net_transit_mt=net,
+                    inventory_without_transit=wo,
+                ))
+
+            report_cards.append(MaterialReportCard(
+                material_id=mid,
+                material_description=mdesc,
+                plants=plant_rows,
+                total_on_hand=round(sum(r.on_hand_mt for r in plant_rows), 3),
+                total_transit_out=round(sum(r.transit_out_mt for r in plant_rows), 3),
+                total_transit_in=round(sum(r.transit_in_mt for r in plant_rows), 3),
+                total_inventory_without_transit=round(
+                    sum(r.inventory_without_transit for r in plant_rows), 3
+                ),
+            ))
+
+        return InventoryReportSchema(materials=report_cards, unit=QUANTITY_UNIT)
+
+    def get_location_summary(
+        self,
+        include_bags: bool = True,
+        include_bulk: bool = False,
+    ) -> LocationSummarySchema:
+        """
+        Brand × Location aggregation grid.
+
+        Stock    = CA/EB closing balance rows
+        Dispatch = BV/VN Sales Order rows (period total)
+        Transit  = BV/ZU Stock Transfer rows (incoming)
+        Inventory Days = stock / avg_daily_dispatch — only when CSV has date column.
+        """
+        from backend.repositories.csv.csv_base import csv_cache
+
+        # ── Date detection ──────────────────────────────────────────────────────
+        raw_df = csv_cache.get("material_ledger")
+        date_col_candidates = ["Posting Date", "Document Date", "Date", "posting_date", "date"]
+        date_col = next((c for c in date_col_candidates if raw_df is not None and c in raw_df.columns), None)
+        has_date_data = date_col is not None
+
+        # ── Plant name lookup → derive location labels from plant master ────────
+        plant_name_map: dict[str, str] = {
+            p.plant_id: p.name for p in self._plants.get_all_plants()
+        }
+
+        def _loc_label(group: dict) -> str:
+            return plant_name_map.get(group["primary"], group["id"])
+
+        # ── Plant → location index ──────────────────────────────────────────────
+        plant_to_loc: dict[str, str] = {}
+        for loc in _LOCATION_GROUPS:
+            for pid in loc["plant_ids"]:
+                plant_to_loc[pid] = loc["id"]
+
+        BK = tuple  # (loc_id, brand_id)
+        stock_acc:    dict[tuple, float] = {}
+        dispatch_acc: dict[tuple, float] = {}
+        transit_acc:  dict[tuple, float] = {}
+
+        def _add(acc: dict, loc_id: str, brand_id: str, qty: float) -> None:
+            k = (loc_id, brand_id)
+            acc[k] = acc.get(k, 0.0) + qty
+
+        def _should_include(desc: str) -> bool:
+            if include_bags and include_bulk:
+                return True
+            if include_bags:
+                return _material_is_bag(desc)
+            if include_bulk:
+                return _material_is_bulk(desc)
+            return False
+
+        # ── Floor stock (CA/EB) ─────────────────────────────────────────────────
+        for m in self._ledger.get_movements(obj_type="CA", category="EB"):
+            loc_id   = plant_to_loc.get(m.plant_id)
+            brand_id = _classify_brand(m.material_description)
+            if not loc_id or not brand_id:
+                continue
+            if not _should_include(m.material_description):
+                continue
+            _add(stock_acc, loc_id, brand_id, m.quantity)
+
+        # ── Dispatch (BV/VN Sales Order) ─────────────────────────────────────────
+        for m in self._ledger.get_movements(obj_type="BV", category="VN"):
+            if m.proc_cat_name != "Sales Order":
+                continue
+            loc_id   = plant_to_loc.get(m.plant_id)
+            brand_id = _classify_brand(m.material_description)
+            if not loc_id or not brand_id:
+                continue
+            if not _should_include(m.material_description):
+                continue
+            _add(dispatch_acc, loc_id, brand_id, m.quantity)
+
+        # ── In-transit incoming (BV/ZU Stock Transfer) ──────────────────────────
+        for m in self._ledger.get_movements(obj_type="BV", category="ZU"):
+            if m.proc_cat_name != "Stock Transfer":
+                continue
+            loc_id   = plant_to_loc.get(m.plant_id)
+            brand_id = _classify_brand(m.material_description)
+            if not loc_id or not brand_id:
+                continue
+            if not _should_include(m.material_description):
+                continue
+            _add(transit_acc, loc_id, brand_id, m.quantity)
+
+        # ── Date-based inventory days ────────────────────────────────────────────
+        # Placeholder: when has_date_data is True we can compute per-day dispatch
+        # averages and derive inventory_days = stock / avg_daily_dispatch.
+        # Currently has_date_data is always False with the standard SAP CSV export.
+        daily_dispatch_map: Optional[dict] = None
+        if has_date_data and date_col:
+            pass  # future: parse date_col, group dispatch by date, compute avg
+
+        def _inv_days(loc_id: str) -> Optional[float]:
+            if not has_date_data or daily_dispatch_map is None:
+                return None
+            total_daily = sum(
+                daily_dispatch_map.get((loc_id, bid), 0.0)
+                for bid in [b["id"] for b in _BRAND_GROUPS]
+            )
+            if total_daily <= 0:
+                return None
+            total_stock = sum(
+                stock_acc.get((loc_id, bid), 0.0)
+                for bid in [b["id"] for b in _BRAND_GROUPS]
+            )
+            return round(total_stock / total_daily, 1)
+
+        # ── Assemble location rows ───────────────────────────────────────────────
+        brand_ids = [b["id"] for b in _BRAND_GROUPS]
+        rows: list[LocationSummaryRow] = []
+        brands_with_data: set[str] = set()
+
+        for loc in _LOCATION_GROUPS:
+            lid = loc["id"]
+            brands: dict[str, BrandGroupStockSchema] = {}
+            tot_stock = 0.0
+            tot_disp  = 0.0
+
+            for bid in brand_ids:
+                s = round(stock_acc.get((lid, bid), 0.0), 3)
+                d = round(dispatch_acc.get((lid, bid), 0.0), 3)
+                t = round(transit_acc.get((lid, bid), 0.0), 3)
+                brands[bid] = BrandGroupStockSchema(stock=s, dispatch=d, transit_in=t)
+                if s != 0 or d != 0:
+                    brands_with_data.add(bid)
+                tot_stock += s
+                tot_disp  += d
+
+            # Skip locations with no stock and no dispatch in this CSV
+            if tot_stock == 0 and tot_disp == 0:
+                continue
+
+            rows.append(LocationSummaryRow(
+                location_id=lid,
+                location_label=_loc_label(loc),
+                brands=brands,
+                total_stock=round(tot_stock, 3),
+                total_dispatch=round(tot_disp, 3),
+                inventory_days=_inv_days(lid),
+            ))
+
+        # ── Totals row ───────────────────────────────────────────────────────────
+        total_brands: dict[str, BrandGroupStockSchema] = {}
+        for bid in brand_ids:
+            total_brands[bid] = BrandGroupStockSchema(
+                stock=round(sum(stock_acc.get((loc["id"], bid), 0.0) for loc in _LOCATION_GROUPS), 3),
+                dispatch=round(sum(dispatch_acc.get((loc["id"], bid), 0.0) for loc in _LOCATION_GROUPS), 3),
+                transit_in=round(sum(transit_acc.get((loc["id"], bid), 0.0) for loc in _LOCATION_GROUPS), 3),
+            )
+        totals_row = LocationSummaryRow(
+            location_id="__total__",
+            location_label="Total",
+            brands=total_brands,
+            total_stock=round(sum(r.total_stock for r in rows), 3),
+            total_dispatch=round(sum(r.total_dispatch for r in rows), 3),
+            inventory_days=None,
+        )
+
+        brand_group_meta = [
+            BrandGroupMetaSchema(id=b["id"], label=b["label"], has_data=b["id"] in brands_with_data)
+            for b in _BRAND_GROUPS
+        ]
+
+        return LocationSummarySchema(
+            locations=rows,
+            totals=totals_row,
+            brand_groups=brand_group_meta,
+            has_date_data=has_date_data,
+            unit=QUANTITY_UNIT,
+        )
 
     def get_plants(self) -> list[PlantSchema]:
         """All plants from the plant master, enriched with GPS for the map."""

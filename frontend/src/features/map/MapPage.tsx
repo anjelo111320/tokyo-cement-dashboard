@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import { MapContainer, TileLayer, Marker, Circle, useMap } from 'react-leaflet';
 import { useQuery } from '@tanstack/react-query';
-import { Layers, List, Map as MapIcon, Factory, Warehouse, Anchor, Building2, ArrowLeft, MapPin, Search, X, SlidersHorizontal, RotateCcw, ArrowRightLeft, Radio } from 'lucide-react';
+import { Layers, List, Map as MapIcon, Factory, Warehouse, Anchor, Building2, ArrowLeft, MapPin, Search, X, SlidersHorizontal, RotateCcw, ArrowRightLeft, Radio, AlertTriangle } from 'lucide-react';
 import { formatNumber } from '@/utils/formatters';
 import { useLedgerKpis, useLedgerTransfers } from '@/features/material_ledger/hooks/useLedger';
 import { getPlantTypeInfo } from './components/plantTypeUtils';
@@ -11,6 +11,7 @@ import { MapBottomSheet } from './components/MapBottomSheet';
 import type { SelectedMapItem } from './components/MapBottomSheet';
 import { MapErrorBoundary } from './components/MapErrorBoundary';
 import { TransferArcs } from './components/TransferArcs';
+import { StockAlertBubbles } from './components/StockAlertBubbles';
 import { PlantTransferActivity } from './components/PlantTransferActivity';
 import { Skeleton } from '@/components/common/LoadingSkeleton';
 import { cn } from '@/utils/cn';
@@ -30,6 +31,7 @@ interface MapFilters {
   dataStatus:       DataStatusKey;
   inTransitOnly:    boolean;
   showArcs:         boolean;
+  showStockAlerts:  boolean;
   selectedPlantIds: string[] | null;  // null = all; string[] = explicit subset
 }
 
@@ -38,6 +40,7 @@ const DEFAULT_FILTERS: MapFilters = {
   dataStatus:       'all',
   inTransitOnly:    false,
   showArcs:         true,
+  showStockAlerts:  false,
   selectedPlantIds: null,
 };
 
@@ -51,7 +54,7 @@ function getPlantTypeKey(plantId: string): PlantTypeKey {
 function countActiveFilters(f: MapFilters): number {
   const disabledTypes = Object.values(f.types).filter(v => !v).length;
   const plantFilter   = f.selectedPlantIds !== null ? 1 : 0;
-  return disabledTypes + (f.dataStatus !== 'all' ? 1 : 0) + (f.inTransitOnly ? 1 : 0) + plantFilter + (!f.showArcs ? 1 : 0);
+  return disabledTypes + (f.dataStatus !== 'all' ? 1 : 0) + (f.inTransitOnly ? 1 : 0) + plantFilter + (!f.showArcs ? 1 : 0) + (f.showStockAlerts ? 1 : 0);
 }
 
 function applyMapFilters(
@@ -93,6 +96,24 @@ function FlyToController({ target }: { target: [number, number] | null }) {
     });
     return () => cancelAnimationFrame(id);
   }, [map, target]);
+  return null;
+}
+
+// Leaflet reads container bounds at mount time, before the fixed+flex layout
+// has fully settled. This forces a recalculation so tiles render in the
+// correct position on desktop.
+function MapSizer() {
+  const map = useMap();
+  useEffect(() => {
+    const id = requestAnimationFrame(() => {
+      map.invalidateSize();
+      // Force TransferArcs to recompute pixel positions with the corrected
+      // Leaflet state. invalidateSize fires 'resize' only when dimensions
+      // changed, which is not guaranteed — viewreset always triggers recompute.
+      map.fire('viewreset');
+    });
+    return () => cancelAnimationFrame(id);
+  }, [map]);
   return null;
 }
 
@@ -290,7 +311,7 @@ function spreadColocated(plants: LedgerPlant[]): LedgerPlant[] {
 }
 
 // ── Map canvas ────────────────────────────────────────────────────────────────
-function MapCanvas({ plants, tileLayer, flyTarget, selectedId, onSelectPlant, isLoading, showArcs }: {
+function MapCanvas({ plants, tileLayer, flyTarget, selectedId, onSelectPlant, isLoading, showArcs, showStockAlerts }: {
   plants: LedgerPlant[];
   tileLayer: TileLayerKey;
   flyTarget: [number, number] | null;
@@ -298,6 +319,7 @@ function MapCanvas({ plants, tileLayer, flyTarget, selectedId, onSelectPlant, is
   onSelectPlant: (p: LedgerPlant) => void;
   isLoading: boolean;
   showArcs: boolean;
+  showStockAlerts: boolean;
 }) {
   const visiblePlants = spreadColocated(
     plants.filter((p) => p.latitude != null && p.longitude != null),
@@ -309,12 +331,13 @@ function MapCanvas({ plants, tileLayer, flyTarget, selectedId, onSelectPlant, is
     <MapContainer
       center={[7.8731, 80.7718]}   // Sri Lanka geographic center
       zoom={7}
-      style={{ width: '100%', height: '100%' }}
+      style={{ position: 'absolute', inset: 0 }}
       zoomControl={true}
       attributionControl={false}
     >
       <TileLayer key={tileLayer} url={TILE_LAYERS[tileLayer].url} attribution={TILE_LAYERS[tileLayer].attribution} maxZoom={19} />
       <FlyToController target={flyTarget} />
+      <MapSizer />
 
       {visiblePlants.map((plant) => (
         <Marker
@@ -344,6 +367,8 @@ function MapCanvas({ plants, tileLayer, flyTarget, selectedId, onSelectPlant, is
 
       {/* Animated in-transit transfer arcs — toggled by showArcs filter */}
       {showArcs && <TransferArcs />}
+      {/* Stock alert bubbles floating above plant pins */}
+      {showStockAlerts && <StockAlertBubbles plants={visiblePlants} onSelectPlant={onSelectPlant} />}
     </MapContainer>
   );
 }
@@ -490,34 +515,57 @@ export function MapPage() {
 
   const FilterPanel = filterOpen && (
     <div className={cn(
-      'absolute top-full right-0 mt-2 w-64 rounded-2xl shadow-2xl border overflow-hidden origin-top-right',
+      'absolute top-full right-0 mt-2 w-[min(256px,calc(100vw-24px))] rounded-2xl shadow-2xl border origin-top-right z-60',
+      'max-h-[70vh] overflow-y-auto',
       isDarkMap ? 'bg-gray-900/97 border-gray-700' : 'bg-white/98 border-gray-200',
     )}>
 
-      {/* ── Transfer Arcs toggle ─────────────────── */}
+      {/* ── Overlays ─────────────────────────────── */}
       <div className={cn('px-3.5 py-2.5 border-b', isDarkMap ? 'border-gray-700' : 'border-gray-100')}>
         <p className={cn('text-[10px] font-bold uppercase tracking-widest mb-2', isDarkMap ? 'text-gray-400' : 'text-gray-400')}>
           Overlays
         </p>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Radio size={12} className="text-[#E05540] shrink-0" />
-            <span className={cn('text-xs', isDarkMap ? 'text-gray-300' : 'text-gray-700')}>Transfer Arcs</span>
+        <div className="space-y-2">
+          {/* Transfer Arcs */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Radio size={12} className="text-[#E05540] shrink-0" />
+              <span className={cn('text-xs', isDarkMap ? 'text-gray-300' : 'text-gray-700')}>Transfer Arcs</span>
+            </div>
+            <button
+              onClick={() => setFilters(f => ({ ...f, showArcs: !f.showArcs }))}
+              className={cn(
+                'w-9 h-5 rounded-full transition-colors duration-200 relative shrink-0',
+                filters.showArcs ? 'bg-[#E05540]' : isDarkMap ? 'bg-gray-600' : 'bg-gray-300',
+              )}
+              aria-label="Toggle transfer arcs"
+            >
+              <span className={cn(
+                'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200',
+                filters.showArcs ? 'translate-x-4' : 'translate-x-0.5',
+              )} />
+            </button>
           </div>
-          {/* Toggle switch */}
-          <button
-            onClick={() => setFilters(f => ({ ...f, showArcs: !f.showArcs }))}
-            className={cn(
-              'w-9 h-5 rounded-full transition-colors duration-200 relative shrink-0',
-              filters.showArcs ? 'bg-[#E05540]' : isDarkMap ? 'bg-gray-600' : 'bg-gray-300',
-            )}
-            aria-label="Toggle transfer arcs"
-          >
-            <span className={cn(
-              'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200',
-              filters.showArcs ? 'translate-x-4' : 'translate-x-0.5',
-            )} />
-          </button>
+          {/* Stock Alerts */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <AlertTriangle size={12} className="text-amber-500 shrink-0" />
+              <span className={cn('text-xs', isDarkMap ? 'text-gray-300' : 'text-gray-700')}>Stock Alerts</span>
+            </div>
+            <button
+              onClick={() => setFilters(f => ({ ...f, showStockAlerts: !f.showStockAlerts }))}
+              className={cn(
+                'w-9 h-5 rounded-full transition-colors duration-200 relative shrink-0',
+                filters.showStockAlerts ? 'bg-amber-500' : isDarkMap ? 'bg-gray-600' : 'bg-gray-300',
+              )}
+              aria-label="Toggle stock alerts"
+            >
+              <span className={cn(
+                'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200',
+                filters.showStockAlerts ? 'translate-x-4' : 'translate-x-0.5',
+              )} />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -779,7 +827,7 @@ export function MapPage() {
             Legend
           </button>
           <div className={cn(
-            'absolute top-full right-0 mt-2 w-44 rounded-xl shadow-xl border overflow-hidden transition-all duration-300 ease-out origin-top-right',
+            'absolute top-full right-0 mt-2 w-44 rounded-xl shadow-xl border overflow-hidden transition-all duration-300 ease-out origin-top-right z-60',
             isDarkMap ? 'bg-gray-900/95 border-gray-700' : 'bg-white/97 border-gray-200',
             legendOpen ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 -translate-y-1 pointer-events-none',
           )}>
@@ -817,7 +865,7 @@ export function MapPage() {
             <span className="w-2.5 h-2.5 rounded-full border border-current/30 shrink-0" style={{ backgroundColor: DOT_COLORS[tileLayer] }} />
           </button>
           <div className={cn(
-            'absolute top-full right-0 mt-2 w-40 rounded-xl shadow-xl border overflow-hidden transition-all duration-300 ease-out origin-top-right',
+            'absolute top-full right-0 mt-2 w-40 rounded-xl shadow-xl border overflow-hidden transition-all duration-300 ease-out origin-top-right z-60',
             isDarkMap ? 'bg-gray-900/95 border-gray-700' : 'bg-white/97 border-gray-200',
             styleOpen ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 -translate-y-1 pointer-events-none',
           )}>
@@ -944,7 +992,7 @@ export function MapPage() {
             <MapErrorBoundary>
               <MapCanvas plants={filteredPlants} tileLayer={tileLayer} flyTarget={flyTarget}
                 selectedId={selectedItem?.data.plant_id ?? null}
-                onSelectPlant={handleSelectPlant} isLoading={isLoading} showArcs={filters.showArcs} />
+                onSelectPlant={handleSelectPlant} isLoading={isLoading} showArcs={filters.showArcs} showStockAlerts={filters.showStockAlerts} />
             </MapErrorBoundary>
             {!isLoading && MapControls}
           </div>
@@ -1043,15 +1091,13 @@ export function MapPage() {
           </div>
         </aside>
 
-        {/* Map canvas — absolute inset-0 so Leaflet height:100% resolves correctly */}
-        <div className="relative flex-1 overflow-hidden">
-          <div className="absolute inset-0">
-            <MapErrorBoundary>
-              <MapCanvas plants={filteredPlants} tileLayer={tileLayer} flyTarget={flyTarget}
-                selectedId={selectedItem?.data.plant_id ?? null}
-                onSelectPlant={handleSelectPlant} isLoading={isLoading} showArcs={filters.showArcs} />
-            </MapErrorBoundary>
-          </div>
+        {/* Map canvas — explicit height so Leaflet reads correct clientHeight at init */}
+        <div className="relative flex-1 overflow-hidden" style={{ height: '100dvh' }}>
+          <MapErrorBoundary>
+            <MapCanvas plants={filteredPlants} tileLayer={tileLayer} flyTarget={flyTarget}
+              selectedId={selectedItem?.data.plant_id ?? null}
+              onSelectPlant={handleSelectPlant} isLoading={isLoading} showArcs={filters.showArcs} showStockAlerts={filters.showStockAlerts} />
+          </MapErrorBoundary>
           {!isLoading && MapControls}
         </div>
       </div>

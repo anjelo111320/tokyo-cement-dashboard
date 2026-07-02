@@ -8,6 +8,21 @@ const CHIP_COLORS = [
   '#F59E0B', '#7C3AED', '#0891B2', '#BE185D',
 ];
 
+// ── Category helpers ──────────────────────────────────────────────────────────
+
+type CategoryFilter = 'all' | 'bulk' | 'bags';
+
+const isBulk = (desc: string) => desc.toLowerCase().includes('bulk');
+const isBags = (desc: string) => /50\s*kg/i.test(desc);
+
+function matchesCategory(desc: string, cat: CategoryFilter): boolean {
+  if (cat === 'all')  return true;
+  if (cat === 'bulk') return isBulk(desc);
+  return isBags(desc);
+}
+
+// ── Brand grouping ────────────────────────────────────────────────────────────
+
 function extractBrand(desc: string): string {
   const idx = desc.indexOf(' - ');
   return idx !== -1
@@ -30,6 +45,8 @@ function buildBrandGroups(materials: LedgerMaterial[]): BrandGroup[] {
   return Array.from(map.entries()).map(([brand, mats]) => ({ brand, materials: mats }));
 }
 
+// ── Component ─────────────────────────────────────────────────────────────────
+
 interface Props {
   materials: LedgerMaterial[];
   selected:  string[];
@@ -37,8 +54,9 @@ interface Props {
 }
 
 export function MultiMaterialPicker({ materials, selected, onChange }: Props) {
-  const [open, setOpen]               = useState(false);
-  const [inStockOnly, setInStockOnly] = useState(false);
+  const [open,           setOpen]           = useState(false);
+  const [inStockOnly,    setInStockOnly]    = useState(false);
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all');
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -49,13 +67,37 @@ export function MultiMaterialPicker({ materials, selected, onChange }: Props) {
     return () => document.removeEventListener('mousedown', handle);
   }, []);
 
-  // When toggling in-stock only, filter visible materials
+  // Counts per category (for button labels)
+  const bulkCount = materials.filter(m => isBulk(m.material_description)).length;
+  const bagsCount = materials.filter(m => isBags(m.material_description)).length;
+
+  // Materials narrowed by the active category, then by in-stock toggle
+  const byCategory     = materials.filter(m => matchesCategory(m.material_description, categoryFilter));
   const visibleMaterials = inStockOnly
-    ? materials.filter(m => m.closing_stock_mt > 0)
-    : materials;
+    ? byCategory.filter(m => m.closing_stock_mt > 0)
+    : byCategory;
+  const inStockCount   = byCategory.filter(m => m.closing_stock_mt > 0).length;
 
   const groups = buildBrandGroups(visibleMaterials);
-  const inStockCount = materials.filter(m => m.closing_stock_mt > 0).length;
+
+  // ── Handlers ────────────────────────────────────────────────────────────────
+
+  // Category buttons only narrow the picker list — they never touch the selection.
+  function selectCategory(cat: CategoryFilter) {
+    setCategoryFilter(cat);
+    setOpen(true); // open the dropdown so the user can see the filtered list
+  }
+
+  function clearAll() {
+    onChange([]);
+  }
+
+  // Adds all currently visible materials (respects category + in-stock filters).
+  function selectAll() {
+    const visibleIds = visibleMaterials.map(m => m.material_id);
+    const missing    = visibleIds.filter(id => !selected.includes(id));
+    if (missing.length > 0) onChange([...selected, ...missing]);
+  }
 
   function colorFor(id: string): string {
     const idx = materials.findIndex(m => m.material_id === id);
@@ -92,9 +134,44 @@ export function MultiMaterialPicker({ materials, selected, onChange }: Props) {
       group.materials.some(m => selected.includes(m.material_id));
   }
 
+  // ── Render ──────────────────────────────────────────────────────────────────
+
   return (
     <div ref={ref} className="relative">
-      {/* Selected chips + open button */}
+
+      {/* ── Category quick-filter buttons ──────────────────────────────── */}
+      <div className="flex flex-wrap gap-1.5 mb-2.5">
+        {([
+          { id: 'all'  as CategoryFilter, label: 'All Materials', count: null         },
+          { id: 'bulk' as CategoryFilter, label: 'Bulk',          count: bulkCount    },
+          { id: 'bags' as CategoryFilter, label: 'Bags',          count: bagsCount    },
+        ]).map(({ id, label, count }) => (
+          <button
+            key={id}
+            onClick={() => selectCategory(id)}
+            className={cn(
+              'px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150 flex items-center gap-1.5',
+              categoryFilter === id
+                ? 'bg-[#1B3550] text-white shadow-sm'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200',
+            )}
+          >
+            {label}
+            {count !== null && (
+              <span className={cn(
+                'text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none',
+                categoryFilter === id
+                  ? 'bg-white/20 text-white'
+                  : 'bg-gray-200 text-gray-500',
+              )}>
+                {count}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Selected chips + open button ───────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-1.5 min-h-9">
         {selected.length === 0 && (
           <span className="text-xs text-gray-400 italic">All Materials</span>
@@ -124,28 +201,40 @@ export function MultiMaterialPicker({ materials, selected, onChange }: Props) {
           <ChevronDown size={11} className={cn('transition-transform', open && 'rotate-180')} />
         </button>
         {selected.length > 0 && (
-          <button onClick={() => onChange([])}
+          <button onClick={clearAll}
             className="text-[10px] text-gray-400 hover:text-gray-600 underline">
             Clear all
           </button>
         )}
       </div>
 
-      {/* Dropdown */}
+      {/* ── Dropdown ────────────────────────────────────────────────────── */}
       {open && (
         <div className="absolute top-full left-0 mt-2 z-50 bg-white border border-gray-200 rounded-xl shadow-xl w-80 overflow-hidden">
 
           {/* Header */}
           <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between">
             <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">
-              Filter by Material / Brand
+              {categoryFilter === 'all'  ? 'Filter by Material / Brand'
+             : categoryFilter === 'bulk' ? 'Bulk Materials'
+             :                             'Bag Materials (50 kg)'}
             </p>
-            {selected.length > 0 && (
-              <button onClick={() => onChange([])}
-                className="text-[10px] text-red-400 hover:text-red-600">
-                Clear all
+            <div className="flex items-center gap-2">
+              <button
+                onClick={selectAll}
+                className="text-[10px] font-semibold text-[#1B3550] hover:text-[#0D1F2D] transition-colors"
+              >
+                Select all
               </button>
-            )}
+              {selected.length > 0 && (
+                <>
+                  <span className="text-gray-200 text-[10px]">·</span>
+                  <button onClick={clearAll} className="text-[10px] text-red-400 hover:text-red-600">
+                    Clear all
+                  </button>
+                </>
+              )}
+            </div>
           </div>
 
           {/* In-stock toggle */}
@@ -155,13 +244,12 @@ export function MultiMaterialPicker({ materials, selected, onChange }: Props) {
                 ? <PackageCheck size={13} className="text-[#16A34A]" />
                 : <Package size={13} className="text-gray-400" />}
               <span className="text-xs font-medium text-gray-700">
-                {inStockOnly ? 'In-stock only' : 'All materials'}
+                {inStockOnly ? 'In-stock only' : 'All'}
               </span>
               <span className="text-[10px] text-gray-400">
-                ({inStockOnly ? inStockCount : materials.length})
+                ({inStockOnly ? inStockCount : byCategory.length})
               </span>
             </div>
-            {/* Toggle switch */}
             <button
               onClick={() => setInStockOnly(v => !v)}
               className={cn(
@@ -243,7 +331,6 @@ export function MultiMaterialPicker({ materials, selected, onChange }: Props) {
                             <p className="text-xs text-gray-700 truncate">{variantPart}</p>
                             <p className="text-[10px] text-gray-400 font-mono">{m.material_id}</p>
                           </div>
-                          {/* Stock badge */}
                           {hasStock ? (
                             <span className="text-[9px] font-semibold text-[#16A34A] bg-green-50 px-1.5 py-0.5 rounded-full shrink-0 whitespace-nowrap">
                               {m.closing_stock_mt.toLocaleString(undefined, { maximumFractionDigits: 1 })} MT

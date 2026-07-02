@@ -1,7 +1,8 @@
 import type { ApiResponse, PaginatedApiResponse } from '@/types/common.types';
 import type {
   LedgerKpi, MovementRow, LedgerMaterial, LedgerPlant, StockTransfer,
-  InventorySummary, InventoryAlerts, MaterialThreshold,
+  InventorySummary, InventoryAlerts, MaterialThreshold, InventoryReport,
+  LocationSummary,
 } from '@/types/material_ledger.types';
 import { apiClient } from './api.client';
 
@@ -51,10 +52,11 @@ export const materialLedgerService = {
     return res.data.data;
   },
 
-  async getInventorySummary(materialIds?: string[], plantIds?: string[]): Promise<InventorySummary> {
+  async getInventorySummary(materialIds?: string[], plantIds?: string[], zeroStockMode?: string): Promise<InventorySummary> {
     const params = new URLSearchParams();
     if (materialIds?.length) params.set('material_ids', materialIds.join(','));
     plantIds?.forEach(id => params.append('plant_id', id));
+    if (zeroStockMode) params.set('zero_stock_mode', zeroStockMode);
     const res = await apiClient.get<ApiResponse<InventorySummary>>(
       '/material-ledger/inventory-summary',
       { params },
@@ -69,6 +71,17 @@ export const materialLedgerService = {
     return res.data.data;
   },
 
+  async getInventoryReport(materialIds?: string[], plantIds?: string[]): Promise<InventoryReport> {
+    const params = new URLSearchParams();
+    if (materialIds?.length) params.set('material_ids', materialIds.join(','));
+    plantIds?.forEach(id => params.append('plant_id', id));
+    const res = await apiClient.get<ApiResponse<InventoryReport>>(
+      '/material-ledger/inventory-report',
+      { params },
+    );
+    return res.data.data;
+  },
+
   async getThresholds(): Promise<MaterialThreshold[]> {
     const res = await apiClient.get<ApiResponse<MaterialThreshold[]>>('/settings/thresholds');
     return res.data.data;
@@ -77,6 +90,13 @@ export const materialLedgerService = {
   async setThreshold(materialId: string, minStockMt: number): Promise<MaterialThreshold[]> {
     const res = await apiClient.post<ApiResponse<MaterialThreshold[]>>('/settings/thresholds', {
       material_id: materialId, min_stock_mt: minStockMt,
+    });
+    return res.data.data;
+  },
+
+  async getLocationSummary(includeBags = true, includeBulk = false): Promise<LocationSummary> {
+    const res = await apiClient.get<ApiResponse<LocationSummary>>('/material-ledger/location-summary', {
+      params: { include_bags: includeBags, include_bulk: includeBulk },
     });
     return res.data.data;
   },

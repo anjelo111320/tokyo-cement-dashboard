@@ -89,8 +89,13 @@ export function TransferArcs() {
     [transfersData],
   );
 
-  // Convert lat/lng → container pixel coords (recalculated on every move/zoom)
+  // Convert lat/lng → container pixel coords (recalculated on every move/zoom).
+  // Guard: if the container is still 0×0 (flex/fixed layout not yet settled on
+  // desktop), latLngToContainerPoint returns (0,0) for every plant, collapsing
+  // all arcs to the top-left corner.  Skip and wait for the ResizeObserver.
   const recompute = useCallback(() => {
+    const el = map.getContainer();
+    if (!el.clientWidth || !el.clientHeight) return;
     const next: Record<string, PixelPos> = {};
     for (const p of plants) {
       const pt = map.latLngToContainerPoint([p.latitude!, p.longitude!]);
@@ -99,10 +104,30 @@ export function TransferArcs() {
     setPositions(next);
   }, [map, plants]);
 
-  useEffect(() => { recompute(); }, [recompute]);
+  // Watch the map container for size changes.  On desktop the fixed+flex layout
+  // takes up to two animation frames to settle, so a single-RAF approach misses
+  // the window where clientWidth/Height first become non-zero.  The observer
+  // fires reliably as soon as the container transitions from 0 → real dimensions,
+  // and again on any subsequent resize (browser window resize, panel toggle).
+  useEffect(() => {
+    const el = map.getContainer();
+    const ro = new ResizeObserver(() => recompute());
+    ro.observe(el);
+    // Double-RAF: give the browser two frames so the fixed+flex layout is
+    // guaranteed to have resolved before we attempt the first recompute.
+    let raf1: number, raf2: number;
+    raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => recompute());
+    });
+    return () => {
+      ro.disconnect();
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+    };
+  }, [map, recompute]);
 
   // Keep arcs in sync during pan, zoom, and tile resets
-  useMapEvents({ move: recompute, zoomend: recompute, viewreset: recompute });
+  useMapEvents({ move: recompute, zoomend: recompute, viewreset: recompute, resize: recompute });
 
   const container = map.getContainer();
   if (aggTransfers.length === 0) return null;

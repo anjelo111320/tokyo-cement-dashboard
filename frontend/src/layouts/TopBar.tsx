@@ -15,8 +15,12 @@ export function TopBar() {
         minHeight: 'calc(60px + env(safe-area-inset-top))',
       }}
     >
-      <div className="flex items-center gap-4 flex-1">
-        <img src="/insee-logo.png" alt="INSEE" className="h-11 w-auto" />
+      <div className="flex items-center gap-3 flex-1 min-w-0">
+        <img src="/insee-logo.png" alt="INSEE" className="h-11 w-auto shrink-0" style={{ maxWidth: '80px' }} />
+        <div className="w-px h-6 bg-[#1B3550] shrink-0" />
+        <p className="text-[#5BA5C2] text-[9px] font-semibold tracking-widest uppercase leading-tight truncate">
+          Finished Goods<br />Inventory Hub
+        </p>
       </div>
 
       <button

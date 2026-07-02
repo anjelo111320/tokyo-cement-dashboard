@@ -55,10 +55,37 @@ export interface StockTransfer {
   unit:      string;
 }
 
+export interface PlantReportRow {
+  plant_id:                  string;
+  plant_name:                string;
+  city:                      string | null;
+  on_hand_mt:                number;
+  transit_out_mt:            number;
+  transit_in_mt:             number;
+  net_transit_mt:            number;
+  inventory_without_transit: number;
+}
+
+export interface MaterialReportCard {
+  material_id:                     string;
+  material_description:            string;
+  plants:                          PlantReportRow[];
+  total_on_hand:                   number;
+  total_transit_out:               number;
+  total_transit_in:                number;
+  total_inventory_without_transit: number;
+}
+
+export interface InventoryReport {
+  materials: MaterialReportCard[];
+  unit:      string;
+}
+
 export interface LedgerMaterial {
   material_id:          string;
   material_description: string;
   closing_stock_mt:     number;
+  ever_stocked:         boolean;
 }
 
 export interface LedgerPlant {
@@ -105,6 +132,7 @@ export interface InventoryAlertRow {
   threshold_mt:  number;
   pct:           number;
   status:        'low' | 'out';
+  ever_stocked:  boolean;
 }
 
 export interface InventoryAlerts {
@@ -116,4 +144,35 @@ export interface MaterialThreshold {
   material_id:   string;
   material_desc: string;
   min_stock_mt:  number;
+}
+
+// ── Location Summary types ────────────────────────────────────────────────────
+
+export interface BrandGroupStock {
+  stock:      number;
+  dispatch:   number;
+  transit_in: number;
+}
+
+export interface LocationSummaryRow {
+  location_id:    string;
+  location_label: string;
+  brands:         Record<string, BrandGroupStock>;
+  total_stock:    number;
+  total_dispatch: number;
+  inventory_days: number | null;
+}
+
+export interface BrandGroupMeta {
+  id:       string;
+  label:    string;
+  has_data: boolean;
+}
+
+export interface LocationSummary {
+  locations:     LocationSummaryRow[];
+  totals:        LocationSummaryRow;
+  brand_groups:  BrandGroupMeta[];
+  has_date_data: boolean;
+  unit:          string;
 }

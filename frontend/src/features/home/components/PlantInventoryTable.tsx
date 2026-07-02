@@ -1,18 +1,22 @@
 /** PlantInventoryTable — per-plant inventory breakdown table. Alerts sort to top. */
 
 import { useState, useEffect } from 'react';
-import { X, Warehouse, TrendingDown, TrendingUp, ArrowDownToLine, Package, ArrowLeftRight } from 'lucide-react';
+import { X, Warehouse, TrendingDown, TrendingUp, ArrowDownToLine, Package, ArrowLeftRight, Info } from 'lucide-react';
 import { cn } from '@/utils/cn';
 import { Skeleton } from '@/components/common/LoadingSkeleton';
 import { EmptyState } from '@/components/common/EmptyState';
 import { convertQty, type UnitScale } from '@/hooks/useSettingsStore';
 import { useLedgerMaterials, useLedgerTransfers } from '@/features/material_ledger/hooks/useLedger';
 import type { InventorySummary, PlantInventoryRow } from '@/types/material_ledger.types';
+import { useSettingsStore, type ZeroStockMode } from '@/hooks/useSettingsStore';
 
 interface Props {
-  summary:   InventorySummary | undefined;
-  isLoading: boolean;
-  unitScale?: UnitScale;
+  summary:        InventorySummary | undefined;
+  isLoading:      boolean;
+  unitScale?:     UnitScale;
+  zeroStockMode?: ZeroStockMode;
+  settingsMode?:  ZeroStockMode;
+  onModeChange?:  (mode: ZeroStockMode) => void;
 }
 
 // ── Status pill ───────────────────────────────────────────────────────────────
@@ -47,7 +51,33 @@ function PlantDetailModal({
   // Plant-scoped: backend filters EB rows to row.plant_id, so closing_stock_mt
   // is the stock at THIS plant only — not the global total.
   const { data: rawMaterials = [], isLoading: matsLoading } = useLedgerMaterials([row.plant_id]);
-  const stockedMaterials = rawMaterials.filter(m => m.closing_stock_mt > 0);
+  const { getThreshold } = useSettingsStore();
+
+  type MatStatus = 'out' | 'low' | 'ok' | 'skip';
+  function matStatus(stock: number, materialId: string, everStocked: boolean): MatStatus {
+    if (stock <= 0) {
+      // Option B: only flag as "out" if this plant has ever carried the material.
+      // If it never had AB or ZU for it, the zero EB is irrelevant — skip it.
+      return everStocked ? 'out' : 'skip';
+    }
+    const threshold = getThreshold(materialId);
+    if (threshold > 0 && stock < threshold) return 'low';
+    return 'ok';
+  }
+
+  const SEVERITY: Record<MatStatus, number> = { out: 0, low: 1, ok: 2, skip: 3 };
+  const sortedMaterials = [...rawMaterials]
+    .filter(m => matStatus(m.closing_stock_mt, m.material_id, m.ever_stocked) !== 'skip')
+    .sort((a, b) =>
+      SEVERITY[matStatus(a.closing_stock_mt, a.material_id, a.ever_stocked)] -
+      SEVERITY[matStatus(b.closing_stock_mt, b.material_id, b.ever_stocked)]
+    );
+
+  const MAT_STYLE: Record<MatStatus, { bg: string; border: string; badge: string; badgeCls: string; idCls: string }> = {
+    out: { bg: 'bg-red-50',    border: 'border-red-200',   badge: '✕ Out',  badgeCls: 'bg-red-100 text-red-700',     idCls: 'text-red-400'    },
+    low: { bg: 'bg-amber-50',  border: 'border-amber-200', badge: '⚠ Low',  badgeCls: 'bg-amber-100 text-amber-700', idCls: 'text-amber-500'  },
+    ok:  { bg: 'bg-gray-50',   border: 'border-gray-100',  badge: '',        badgeCls: '',                            idCls: 'text-[#2E6B8A]'  },
+  };
 
   // Fetch all transfers once (cached), then split by direction for this plant
   const { data: transferData, isLoading: txLoading } = useLedgerTransfers();
@@ -188,14 +218,14 @@ function PlantDetailModal({
           </div>
         </div>
 
-        {/* ── Available materials ──────────────────────────────────────── */}
+        {/* ── Material stock status ────────────────────────────────────── */}
         <div className="px-6 mt-4">
           <div className="flex items-center gap-2 mb-2">
             <Package size={12} className="text-gray-400" />
-            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Available Materials</p>
-            {!matsLoading && stockedMaterials.length > 0 && (
+            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Material Stock Status</p>
+            {!matsLoading && sortedMaterials.length > 0 && (
               <span className="text-[9px] font-semibold bg-[#0D1F2D]/10 text-[#0D1F2D] px-2 py-0.5 rounded-full">
-                {stockedMaterials.length}
+                {sortedMaterials.length}
               </span>
             )}
           </div>
@@ -204,26 +234,33 @@ function PlantDetailModal({
             <div className="space-y-1.5">
               {[0, 1, 2].map(i => <Skeleton key={i} className="h-9 w-full rounded-lg" />)}
             </div>
-          ) : stockedMaterials.length === 0 ? (
-            <p className="text-xs text-gray-400 text-center py-3">No stock at this plant</p>
+          ) : sortedMaterials.length === 0 ? (
+            <p className="text-xs text-gray-400 text-center py-3">No materials at this plant</p>
           ) : (
             <div className="space-y-1.5">
-              {stockedMaterials.map(mat => {
-                const qty = convertQty(mat.closing_stock_mt, scale);
+              {sortedMaterials.map(mat => {
+                const status = matStatus(mat.closing_stock_mt, mat.material_id, mat.ever_stocked);
+                const style  = MAT_STYLE[status];
+                const qty    = convertQty(mat.closing_stock_mt, scale);
                 return (
                   <div
                     key={mat.material_id}
-                    className="flex items-center justify-between bg-gray-50 border border-gray-100 rounded-lg px-3 py-2.5"
+                    className={cn('flex items-center justify-between border rounded-lg px-3 py-2.5', style.bg, style.border)}
                   >
                     <div className="min-w-0 flex-1">
-                      <span className="font-mono text-[10px] font-semibold text-[#2E6B8A]">
+                      <span className={cn('font-mono text-[10px] font-semibold', style.idCls)}>
                         {mat.material_id}
                       </span>
                       <p className="text-xs text-gray-700 font-medium truncate leading-tight mt-0.5">
                         {mat.material_description}
                       </p>
                     </div>
-                    <div className="text-right ml-3 shrink-0">
+                    <div className="flex flex-col items-end gap-1 ml-3 shrink-0">
+                      {style.badge && (
+                        <span className={cn('text-[9px] font-bold px-1.5 py-0.5 rounded-full leading-none', style.badgeCls)}>
+                          {style.badge}
+                        </span>
+                      )}
                       <p className="text-xs font-bold text-gray-900">{qty.value}</p>
                       <p className="text-[9px] text-gray-400">{qty.unit}</p>
                     </div>
@@ -267,6 +304,10 @@ function PlantDetailModal({
                                 <span className="font-mono text-[10px] font-bold text-amber-700">{t.dest_plant_id}</span>
                               </div>
                               <p className="text-[10px] text-gray-500 truncate mt-0.5">{t.dest_plant_name}</p>
+                              <p className="text-[9px] text-gray-400 truncate mt-0.5">
+                                <span className="font-mono">{t.material_id}</span>
+                                {t.material_description && <> · {t.material_description}</>}
+                              </p>
                             </div>
                             <div className="text-right ml-3 shrink-0">
                               <p className="text-xs font-bold text-amber-700">{qty.value}</p>
@@ -297,6 +338,10 @@ function PlantDetailModal({
                                 <span className="font-mono text-[10px] font-bold text-green-700">{t.dest_plant_id}</span>
                               </div>
                               <p className="text-[10px] text-gray-500 truncate mt-0.5">{t.source_plant_name}</p>
+                              <p className="text-[9px] text-gray-400 truncate mt-0.5">
+                                <span className="font-mono">{t.material_id}</span>
+                                {t.material_description && <> · {t.material_description}</>}
+                              </p>
                             </div>
                             <div className="text-right ml-3 shrink-0">
                               <p className="text-xs font-bold text-green-700">{qty.value}</p>
@@ -327,19 +372,81 @@ function PlantDetailModal({
 
 // ── Main table ────────────────────────────────────────────────────────────────
 
-export function PlantInventoryTable({ summary, isLoading, unitScale }: Props) {
+export function PlantInventoryTable({ summary, isLoading, unitScale, zeroStockMode = 'accurate', settingsMode, onModeChange }: Props) {
   const scale = unitScale ?? { unit: 'MT' as const, bagsPerMt: 1 };
   const unit  = scale.unit;
 
   const [selectedRow, setSelectedRow] = useState<PlantInventoryRow | null>(null);
+  const [hideZeros,   setHideZeros]   = useState(true);
+
+  const isOverridden = settingsMode !== undefined && zeroStockMode !== settingsMode;
+
+  function toggleMode() {
+    if (!onModeChange) return;
+    onModeChange(zeroStockMode === 'accurate' ? 'active_only' : 'accurate');
+  }
+
+  function resetToSettings() {
+    onModeChange?.(settingsMode ?? 'accurate');
+  }
+
+  const allRows     = summary?.rows ?? [];
+  const zeroRows    = allRows.filter(r => r.on_hand_mt === 0 && r.in_transit_out_mt === 0 && r.in_transit_in_mt === 0);
+  const visibleRows = hideZeros ? allRows.filter(r => !(r.on_hand_mt === 0 && r.in_transit_out_mt === 0 && r.in_transit_in_mt === 0)) : allRows;
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
       <div className="px-5 py-4 border-b border-gray-100">
-        <h3 className="text-sm font-semibold text-gray-900">Per-Plant Inventory Status</h3>
-        <p className="text-xs text-gray-400 mt-0.5">
-          Available Stock = closing balance (EB) · In-Transit = transfer movements (BV rows) · Click a row for details
-        </p>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900">Per-Plant Inventory Status</h3>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Available Stock = closing balance (EB) · In-Transit = transfer movements (BV rows) · Click a row for details
+            </p>
+          </div>
+          <button
+            onClick={() => setHideZeros(v => !v)}
+            className={cn(
+              'shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all duration-150',
+              hideZeros
+                ? 'bg-[#1B3550] text-white border-[#1B3550]'
+                : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200',
+            )}
+          >
+            {hideZeros ? 'Showing active' : 'Show active only'}
+            {hideZeros && zeroRows.length > 0 && (
+              <span className="bg-white/20 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none">
+                {zeroRows.length} hidden
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* ── Alert mode override button ──────────────────────────────── */}
+        <div className="mt-3 flex items-center gap-2 flex-wrap">
+          <button
+            onClick={toggleMode}
+            className={cn(
+              'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all duration-150',
+              zeroStockMode === 'accurate'
+                ? 'bg-green-50 text-green-800 border-green-200 hover:bg-green-100'
+                : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100',
+            )}
+          >
+            <Info size={11} />
+            {zeroStockMode === 'accurate'
+              ? 'Alert mode: Active plants only — ignoring materials never stocked at each plant'
+              : 'Alert mode: Ignore zero stock — only flagging plants with stock > 0 but below threshold'}
+          </button>
+          {isOverridden && (
+            <button
+              onClick={resetToSettings}
+              className="text-[10px] text-gray-400 hover:text-gray-600 underline"
+            >
+              Reset to Settings default
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="overflow-x-auto">
@@ -371,11 +478,11 @@ export function PlantInventoryTable({ summary, isLoading, unitScale }: Props) {
               </tr>
             ))}
 
-            {!isLoading && (!summary || summary.rows.length === 0) && (
+            {!isLoading && visibleRows.length === 0 && (
               <tr><td colSpan={6}><EmptyState /></td></tr>
             )}
 
-            {!isLoading && summary?.rows.map((row) => (
+            {!isLoading && visibleRows.map((row) => (
               <tr
                 key={row.plant_id}
                 onClick={() => setSelectedRow(row)}

@@ -4,10 +4,10 @@ import { RootLayout } from '@/layouts/RootLayout';
 import { ROUTES } from '@/constants/routes';
 import { Skeleton } from '@/components/common/LoadingSkeleton';
 
-const HomePage           = lazy(() => import('@/features/home/HomePage').then((m) => ({ default: m.HomePage })));
-const MapPage            = lazy(() => import('@/features/map/MapPage').then((m) => ({ default: m.MapPage })));
-const MaterialLedgerPage = lazy(() => import('@/features/material_ledger/MaterialLedgerPage').then((m) => ({ default: m.MaterialLedgerPage })));
-const SettingsPage       = lazy(() => import('@/features/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })));
+const HomePage   = lazy(() => import('@/features/home/HomePage').then((m) => ({ default: m.HomePage })));
+const MapPage    = lazy(() => import('@/features/map/MapPage').then((m) => ({ default: m.MapPage })));
+const ReportPage = lazy(() => import('@/features/report/ReportPage').then((m) => ({ default: m.ReportPage })));
+const SettingsPage = lazy(() => import('@/features/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })));
 
 function PageLoader() {
   return (
@@ -36,7 +36,7 @@ const router = createBrowserRouter([
       },
       {
         path: ROUTES.LEDGER,
-        element: <Suspense fallback={<PageLoader />}><MaterialLedgerPage /></Suspense>,
+        element: <Suspense fallback={<PageLoader />}><ReportPage /></Suspense>,
       },
       {
         path: ROUTES.SETTINGS,

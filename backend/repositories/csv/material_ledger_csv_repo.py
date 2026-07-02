@@ -31,6 +31,21 @@ logger = get_logger(__name__)
 _KNOWN_CSV_COLS = set(COLUMN_MAP.values())
 _KNOWN_PLANT_COLS = set(PLANT_COLUMN_MAP.values())
 
+_PLANT_NAME_REPLACEMENTS = [
+    ("Tokyo Cement", "SCCCL"),
+    (" Exp. Log.", " Express Logistics"),
+    (" Exp.", " Express"),
+    (" Log.", " Logistics"),
+    (" CMB ", " Colombo "),
+    (" WH", " Warehouse"),
+]
+
+
+def _normalize_plant_name(name: str) -> str:
+    for old, new in _PLANT_NAME_REPLACEMENTS:
+        name = name.replace(old, new)
+    return name
+
 
 class MaterialLedgerCsvRepository:
     """
@@ -237,7 +252,7 @@ class PlantMasterCsvRepository:
 
                 plants.append(PlantMaster(
                     plant_id=pid,
-                    name=str(row.get("name", "")),
+                    name=_normalize_plant_name(str(row.get("name", ""))),
                     city=str(row["city"]) if pd.notna(row.get("city")) else None,
                     address=str(row["address"]) if pd.notna(row.get("address")) else None,
                     country=str(row["country"]) if pd.notna(row.get("country")) else None,

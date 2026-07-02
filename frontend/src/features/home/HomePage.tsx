@@ -1,19 +1,17 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { formatDateTime } from '@/utils/formatters';
 import { PageHeader } from '@/components/common/PageHeader';
 import { ErrorState } from '@/components/common/ErrorState';
 import {
   useInventorySummary,
-  useInventoryAlerts,
   useLedgerMaterials,
   useLedgerPlants,
 } from '@/features/material_ledger/hooks/useLedger';
-import { useSettingsStore } from '@/hooks/useSettingsStore';
+import { useSettingsStore, type UnitScale, type ZeroStockMode } from '@/hooks/useSettingsStore';
 import { useLocalStorage }  from '@/hooks/useLocalStorage';
 import { MultiMaterialPicker } from './components/MultiMaterialPicker';
 import { MultiPlantPicker }    from './components/MultiPlantPicker';
 import { InventoryKpiCards }   from './components/InventoryKpiCards';
-import { LowStockAlerts }      from './components/LowStockAlerts';
 import { PlantInventoryTable } from './components/PlantInventoryTable';
 
 export function HomePage() {
@@ -21,7 +19,11 @@ export function HomePage() {
   const [plantIds,    setPlantIds]    = useLocalStorage<string[]>('insee_dashboard_plant_ids',    []);
 
   const { data: plants    = [] } = useLedgerPlants();
-  const { getUnitScale }          = useSettingsStore();
+  const { getUnitScale, allUnitScales, zeroStockMode: settingsMode } = useSettingsStore();
+
+  // Table can temporarily override the Settings mode for the current session
+  const [modeOverride, setModeOverride] = useState<ZeroStockMode | null>(null);
+  const effectiveMode: ZeroStockMode = modeOverride ?? settingsMode;
 
   const activePlants = plants.filter(p => p.has_ledger_data);
 
@@ -40,18 +42,30 @@ export function HomePage() {
     if (stillValid.length !== materialIds.length) setMaterialIds(stillValid);
   }, [materials, materialsLoading]);
 
-  const activeScale = materialIds.length === 1
-    ? getUnitScale(materialIds[0])
-    : { unit: 'MT' as const, bagsPerMt: 1 };
+  // Determine display unit:
+  // • 1 material selected  → use that material's configured scale
+  // • 2+ materials selected → if ALL have the same bags scale applied, show in bags;
+  //                           mixed or no scale → fall back to MT
+  // • 0 selected (all)     → MT (bulk + bag materials are mixed)
+  const activeScale = useMemo((): UnitScale => {
+    if (materialIds.length === 1) return getUnitScale(materialIds[0]);
+    if (materialIds.length > 1) {
+      const scales = materialIds.map(id => allUnitScales[id]);
+      if (scales.every(s => s?.unit === 'bags')) {
+        const rates = [...new Set(scales.map(s => s!.bagsPerMt))];
+        if (rates.length === 1) return { unit: 'bags', bagsPerMt: rates[0] };
+      }
+    }
+    return { unit: 'MT', bagsPerMt: 1 };
+  }, [materialIds, getUnitScale, allUnitScales]);
 
   const {
     data: summary, isLoading: summaryLoading, isError: summaryError, refetch: refetchSummary,
   } = useInventorySummary(
     materialIds.length ? materialIds : undefined,
     plantIds.length    ? plantIds    : undefined,
+    effectiveMode,
   );
-
-  const { data: alerts } = useInventoryAlerts(materialIds.length ? materialIds : undefined);
 
   return (
     <div className="p-4 lg:p-6 max-w-screen-2xl mx-auto">
@@ -98,15 +112,15 @@ export function HomePage() {
         <InventoryKpiCards summary={summary} isLoading={summaryLoading} unitScale={activeScale} />
       </section>
 
-      {/* ── Low stock alerts ───────────────────────────────────────────── */}
-      {alerts && alerts.alerts.length > 0 && (
-        <div className="mb-5">
-          <LowStockAlerts alerts={alerts} />
-        </div>
-      )}
-
       {/* ── Per-plant inventory table ──────────────────────────────────── */}
-      <PlantInventoryTable summary={summary} isLoading={summaryLoading} unitScale={activeScale} />
+      <PlantInventoryTable
+        summary={summary}
+        isLoading={summaryLoading}
+        unitScale={activeScale}
+        zeroStockMode={effectiveMode}
+        settingsMode={settingsMode}
+        onModeChange={setModeOverride}
+      />
     </div>
   );
 }

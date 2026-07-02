@@ -16,11 +16,21 @@ export const queryKeys = {
   },
 
   inventory: {
-    summary: (materialIds?: string[], plantIds?: string[]) =>
-      ['inventory', 'summary', materialIds?.join(',') ?? 'all', plantIds?.join(',') ?? 'all'] as const,
+    summary: (materialIds?: string[], plantIds?: string[], zeroStockMode?: string) =>
+      ['inventory', 'summary', materialIds?.join(',') ?? 'all', plantIds?.join(',') ?? 'all', zeroStockMode ?? 'accurate'] as const,
     alerts: (materialIds?: string[]) =>
       ['inventory', 'alerts', materialIds?.join(',') ?? 'all'] as const,
     thresholds: () => ['inventory', 'thresholds'] as const,
+  },
+
+  report: {
+    inventory: (materialIds?: string[], plantIds?: string[]) =>
+      ['report', 'inventory', materialIds?.join(',') ?? 'all', plantIds?.join(',') ?? 'all'] as const,
+  },
+
+  location: {
+    locationSummary: (includeBags: boolean, includeBulk: boolean) =>
+      ['location', 'summary', includeBags, includeBulk] as const,
   },
 
   settings: {

@@ -33,14 +33,3 @@ export interface Pagination {
   total_pages: number;
 }
 
-export interface ApiError {
-  success: false;
-  error: {
-    code: string;
-    message: string;
-    details?: Record<string, unknown>;
-  };
-  meta: ApiMeta;
-}
-
-export type DateRangePreset = 'today' | '7d' | '30d' | '90d' | 'custom';

@@ -11,6 +11,7 @@ Endpoints:
   GET /api/v1/material-ledger/stock-transfers    → inter-plant transfer rows
   GET /api/v1/material-ledger/materials          → distinct materials (filter dropdown)
   GET /api/v1/material-ledger/plants             → all plants with GPS coords
+  GET /api/v1/material-ledger/location-summary   → brand × location grid
 """
 
 import math
@@ -21,6 +22,7 @@ from backend.schemas.common import ApiResponse, PaginatedResponse, Pagination, A
 from backend.schemas.material_ledger import (
     LedgerKpiSchema, MovementRowSchema, MaterialSchema, PlantSchema,
     StockTransferSchema, InventorySummarySchema, InventoryAlertsSchema,
+    InventoryReportSchema, LocationSummarySchema,
 )
 from backend.services.material_ledger_service import MaterialLedgerService
 
@@ -64,12 +66,17 @@ async def get_movements(
 
 @router.get("/inventory-summary", response_model=ApiResponse[InventorySummarySchema])
 async def get_inventory_summary(
-    material_ids: Optional[str] = Query(None, description="Comma-separated material IDs"),
-    plant_id:     list[str]     = Query(default=[], description="Plant IDs to filter (repeatable)"),
+    material_ids:    Optional[str] = Query(None, description="Comma-separated material IDs"),
+    plant_id:        list[str]     = Query(default=[], description="Plant IDs to filter (repeatable)"),
+    zero_stock_mode: str           = Query("accurate", description="accurate | active_only"),
 ):
     """Per-plant inventory: on-hand, in-transit out/in, and alert status."""
     mid_list = [m.strip() for m in material_ids.split(",")] if material_ids else None
-    return ApiResponse(data=_svc.get_inventory_summary(material_ids=mid_list, plant_ids=plant_id or None))
+    return ApiResponse(data=_svc.get_inventory_summary(
+        material_ids=mid_list,
+        plant_ids=plant_id or None,
+        zero_stock_mode=zero_stock_mode,
+    ))
 
 
 @router.get("/inventory-alerts", response_model=ApiResponse[InventoryAlertsSchema])
@@ -88,6 +95,31 @@ async def get_stock_transfers(
 ):
     """Inter-plant stock transfer notes parsed from VM+VN movement rows."""
     return ApiResponse(data=_svc.get_stock_transfers(plant_id=plant_id, material_id=material_id))
+
+
+@router.get("/inventory-report", response_model=ApiResponse[InventoryReportSchema])
+async def get_inventory_report(
+    material_ids: Optional[str] = Query(None, description="Comma-separated material IDs"),
+    plant_id:     list[str]     = Query(default=[], description="Plant IDs to filter (repeatable)"),
+):
+    """Per-material, per-plant inventory report matching the CSV report structure."""
+    mid_list = [m.strip() for m in material_ids.split(",")] if material_ids else None
+    return ApiResponse(data=_svc.get_inventory_report(
+        material_ids=mid_list,
+        plant_ids=plant_id or None,
+    ))
+
+
+@router.get("/location-summary", response_model=ApiResponse[LocationSummarySchema])
+async def get_location_summary(
+    include_bags: bool = Query(True,  description="Include 50 kg bag materials"),
+    include_bulk: bool = Query(False, description="Include bulk materials"),
+):
+    """Brand × location grid: floor stock, period dispatch, and (if CSV has date column) inventory days."""
+    return ApiResponse(data=_svc.get_location_summary(
+        include_bags=include_bags,
+        include_bulk=include_bulk,
+    ))
 
 
 @router.get("/materials", response_model=ApiResponse[list[MaterialSchema]])

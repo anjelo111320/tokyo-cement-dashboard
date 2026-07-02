@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Settings, Database, RefreshCw, CheckCircle2, AlertCircle, Bell, Trash2, Plus, Scale, Search, Check } from 'lucide-react';
+import { Settings, Database, RefreshCw, CheckCircle2, AlertCircle, Bell, Trash2, Plus, Scale, Search, Check, SlidersHorizontal } from 'lucide-react';
 import { PageHeader } from '@/components/common/PageHeader';
 import { settingsService } from '@/services/settings.service';
 import { materialLedgerService } from '@/services/material_ledger.service';
@@ -8,7 +8,7 @@ import { queryKeys } from '@/constants/queryKeys';
 import { Skeleton } from '@/components/common/LoadingSkeleton';
 import { formatNumber } from '@/utils/formatters';
 import { cn } from '@/utils/cn';
-import { useSettingsStore, type UnitScale } from '@/hooks/useSettingsStore';
+import { useSettingsStore, type UnitScale, type ZeroStockMode } from '@/hooks/useSettingsStore';
 
 function SectionCard({ title, icon, children }: {
   title: string; icon: React.ReactNode; children: React.ReactNode;
@@ -394,6 +394,75 @@ function ThresholdsSection() {
   );
 }
 
+// ── Alert Behaviour section ───────────────────────────────────────────────────
+
+const ZERO_STOCK_OPTIONS: {
+  value:    ZeroStockMode;
+  label:    string;
+  explain:  string;
+  badge:    string;
+  badgeCls: string;
+}[] = [
+  {
+    value:    'accurate',
+    label:    'Active plants only',
+    explain:  'A plant is flagged only if it has previously received or opened stock for that material AND the current level is below the threshold. Materials that were never stocked at a plant are ignored — they are not "out of stock", they simply don\'t carry that product.',
+    badge:    'Recommended',
+    badgeCls: 'bg-green-100 text-green-700',
+  },
+  {
+    value:    'active_only',
+    label:    'Ignore zero stock',
+    explain:  'Only flags a plant-material pair when stock is above zero but below the threshold (i.e. genuinely running low). If stock is exactly zero the entry is silently skipped — useful when many materials show zero because they are not stocked at that plant, and you want no "out" alerts at all.',
+    badge:    'Option A',
+    badgeCls: 'bg-gray-100 text-gray-600',
+  },
+];
+
+function AlertBehaviourSection() {
+  const { zeroStockMode, setZeroStockMode } = useSettingsStore();
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-gray-500">
+        Controls how the dashboard decides whether a plant-material pair counts as a low-stock alert.
+        The choice affects the KPI count card and the status badge on each plant row.
+      </p>
+      <div className="space-y-2">
+        {ZERO_STOCK_OPTIONS.map(opt => {
+          const active = zeroStockMode === opt.value;
+          return (
+            <button
+              key={opt.value}
+              onClick={() => setZeroStockMode(opt.value)}
+              className={cn(
+                'w-full text-left rounded-xl border p-4 transition-all',
+                active
+                  ? 'bg-[#0D1F2D]/5 border-[#1B3550] ring-1 ring-[#1B3550]/30'
+                  : 'bg-gray-50 border-gray-200 hover:border-gray-300',
+              )}
+            >
+              <div className="flex items-center gap-2 mb-1.5">
+                <span className={cn(
+                  'w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center',
+                  active ? 'border-[#1B3550] bg-[#1B3550]' : 'border-gray-300',
+                )}>
+                  {active && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
+                </span>
+                <span className="text-xs font-semibold text-gray-900">{opt.label}</span>
+                <span className={cn('text-[10px] font-bold px-2 py-0.5 rounded-full ml-auto', opt.badgeCls)}>
+                  {opt.badge}
+                </span>
+              </div>
+              <p className="text-[11px] text-gray-500 leading-relaxed pl-6">{opt.explain}</p>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 export function SettingsPage() {
   const queryClient = useQueryClient();
@@ -432,6 +501,11 @@ export function SettingsPage() {
         {/* ── Low Stock Thresholds ──────────────────────────────────── */}
         <SectionCard title="Low Stock Alert Thresholds" icon={<Bell size={16} />}>
           <ThresholdsSection />
+        </SectionCard>
+
+        {/* ── Alert Behaviour ───────────────────────────────────────── */}
+        <SectionCard title="Alert Behaviour — Zero Stock Handling" icon={<SlidersHorizontal size={16} />}>
+          <AlertBehaviourSection />
         </SectionCard>
 
         {/* ── CSV Data Sources ──────────────────────────────────────── */}

@@ -12,17 +12,22 @@ const STORAGE_KEY = 'tc_settings_v1';
 
 export type DisplayUnit = 'MT' | 'bags';
 
+export type ZeroStockMode =
+  | 'accurate'    // Option B: only flag plant-materials that have ever had opening/receipt stock
+  | 'active_only'; // Option A: only flag 0 < stock < threshold; zero stock is never shown as out
+
 export interface UnitScale {
   unit:      DisplayUnit;
   bagsPerMt: number;   // how many bags make 1 MT (e.g. 20 for 50 kg bags)
 }
 
 interface SettingsState {
-  unitScales:  Record<string, UnitScale>;    // keyed by material_id
-  thresholds:  Record<string, number>;       // keyed by material_id, value = min MT
+  unitScales:     Record<string, UnitScale>;    // keyed by material_id
+  thresholds:     Record<string, number>;       // keyed by material_id, value = min MT
+  zeroStockMode:  ZeroStockMode;
 }
 
-const DEFAULT: SettingsState = { unitScales: {}, thresholds: {} };
+const DEFAULT: SettingsState = { unitScales: {}, thresholds: {}, zeroStockMode: 'accurate' };
 
 function load(): SettingsState {
   try {
@@ -115,7 +120,13 @@ export function useSettingsStore() {
 
   const allUnitScales = state.unitScales;
 
-  return { getUnitScale, setUnitScale, getThreshold, setThreshold, allUnitScales };
+  const zeroStockMode = state.zeroStockMode;
+
+  const setZeroStockMode = useCallback((mode: ZeroStockMode) => {
+    _setState(prev => ({ ...prev, zeroStockMode: mode }));
+  }, []);
+
+  return { getUnitScale, setUnitScale, getThreshold, setThreshold, allUnitScales, zeroStockMode, setZeroStockMode };
 }
 
 /**

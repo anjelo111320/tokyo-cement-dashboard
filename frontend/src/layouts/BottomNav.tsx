@@ -6,7 +6,7 @@ import { cn } from '@/utils/cn';
 const NAV_ITEMS = [
   { to: ROUTES.HOME,     icon: LayoutDashboard, label: 'Home' },
   { to: ROUTES.MAP,      icon: Map,             label: 'Map' },
-  { to: ROUTES.LEDGER,   icon: FileBarChart2,   label: 'Report' },
+  { to: ROUTES.LEDGER,   icon: FileBarChart2,   label: 'Stocks' },
   { to: ROUTES.SETTINGS, icon: Settings,        label: 'Settings' },
 ];
 

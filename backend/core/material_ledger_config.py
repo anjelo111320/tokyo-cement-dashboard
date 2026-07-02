@@ -48,6 +48,7 @@ COLUMN_MAP: dict[str, str] = {
     "proc_cat_name":        "Proc Cat Name",
     "quantity":             "Quantity",
     "price":                "Price",
+    "posting_date":         "Posting Date",  # date-aware dispatch (absent in current CSV)
 }
 
 # ── Plant name column mapping ──────────────────────────────────────────────────
