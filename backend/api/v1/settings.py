@@ -25,7 +25,13 @@ Depends on:
 """
 
 import uuid
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.auth.dependencies import get_current_user, require_admin
+from backend.db.database import get_db
+from backend.db.models.user import User
+from backend.repositories.db import threshold_repo
 from backend.schemas.common import ApiResponse
 from backend.schemas.settings import (
     CsvConfigSchema,
@@ -102,8 +108,10 @@ async def trigger_ingestion():
 
 
 @router.get("/thresholds", response_model=ApiResponse[list[MaterialThresholdSchema]])
-async def get_thresholds():
-    """Returns all configured low-stock alert thresholds."""
+async def get_thresholds(_: User = Depends(get_current_user)):
+    """Returns all configured low-stock alert thresholds.
+    Served from the in-memory cache, hydrated from the DB at startup.
+    """
     return ApiResponse(data=_svc.get_material_thresholds())
 
 
@@ -111,9 +119,17 @@ async def get_thresholds():
 async def set_threshold(
     material_id:  str   = Body(..., embed=True),
     min_stock_mt: float = Body(..., embed=True),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_admin),
 ):
     """Sets or removes a low-stock threshold for a material.
     Pass min_stock_mt=0 to remove the alert for that material.
+    Write-through: updates the in-memory cache (used by the sync CSV service)
+    AND persists to the DB so values survive restarts/spin-downs.
     """
     _svc.set_material_threshold(material_id=material_id, min_stock_mt=min_stock_mt)
+    if min_stock_mt <= 0:
+        await threshold_repo.delete(db, material_id)
+    else:
+        await threshold_repo.upsert(db, material_id, min_stock_mt, updated_by=user.id)
     return ApiResponse(data=_svc.get_material_thresholds())

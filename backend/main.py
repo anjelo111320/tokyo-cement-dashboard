@@ -38,12 +38,38 @@ logger = get_logger(__name__)
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("startup", app=settings.app_name, version=settings.app_version)
 
+    # Refuse to silently run with the placeholder JWT signing key in any
+    # cross-site (production) deployment — tokens would be forgeable by anyone
+    # who has read the public repo. Local same-site dev still boots with a warning.
+    if settings.secret_key.startswith("changeme"):
+        if settings.cookie_secure:  # cookie_secure=true is our production signal
+            raise RuntimeError(
+                "SECRET_KEY is still the placeholder value. Set a real key on the "
+                "host (generate with: openssl rand -hex 32) before deploying."
+            )
+        logger.warning("insecure_secret_key", detail="Using placeholder SECRET_KEY — dev only, never deploy like this")
+
     # Initialise PostgreSQL engine if DATABASE_URL is configured
     if settings.database_url:
-        from backend.db.database import init_engine
-        from sqlalchemy.ext.asyncio import AsyncEngine
+        from backend.db.database import init_engine, get_db
         init_engine(settings.database_url)
         logger.info("database_connected", url=settings.database_url.split("@")[-1])
+
+        # Hydrate the in-memory threshold cache from the DB so low-stock alert
+        # settings survive restarts (Render free tier spins down when idle —
+        # without this, thresholds silently reset on every wake-up).
+        # Best-effort: an unreachable DB must not prevent the CSV API booting.
+        from backend.repositories.db import threshold_repo
+        from backend.core.material_ledger_config import MATERIAL_THRESHOLDS
+        try:
+            async for db in get_db():
+                db_thresholds = await threshold_repo.as_dict(db)
+                MATERIAL_THRESHOLDS.clear()
+                MATERIAL_THRESHOLDS.update(db_thresholds)
+                logger.info("thresholds_hydrated", count=len(db_thresholds))
+                break
+        except Exception as exc:
+            logger.error("threshold_hydration_failed", error=str(exc))
 
     csv_cache.load_all()
     start_scheduler()

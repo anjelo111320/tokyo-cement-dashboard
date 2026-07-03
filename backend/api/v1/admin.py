@@ -62,7 +62,7 @@ async def update_plant(plant_id: str, body: PlantUpdate, db: AsyncSession = Depe
     plant = await plant_repo.get_by_id(db, plant_id)
     if not plant:
         raise HTTPException(status_code=404, detail="Plant not found")
-    updates = body.model_dump(exclude_none=True)
+    updates = body.model_dump(exclude_unset=True)
     await plant_repo.update(db, plant, **updates)
     return {"success": True}
 
@@ -127,7 +127,7 @@ async def update_material(material_id: str, body: MaterialUpdate, db: AsyncSessi
     mat = result.scalar_one_or_none()
     if not mat:
         raise HTTPException(status_code=404, detail="Material not found")
-    for k, v in body.model_dump(exclude_none=True).items():
+    for k, v in body.model_dump(exclude_unset=True).items():
         setattr(mat, k, v)
     await db.commit()
     return {"success": True}
@@ -219,6 +219,12 @@ async def get_thresholds(db: AsyncSession = Depends(get_db), _: User = Depends(g
 @router.put("/thresholds/{material_id}")
 async def upsert_threshold(material_id: str, body: ThresholdUpsert, db: AsyncSession = Depends(get_db), user: User = Depends(require_admin)):
     await threshold_repo.upsert(db, material_id, body.threshold_mt, updated_by=user.id)
+    # Keep the in-memory cache (used by the sync CSV alert service) in step.
+    from backend.core.material_ledger_config import MATERIAL_THRESHOLDS  # noqa: PLC0415
+    if body.threshold_mt <= 0:
+        MATERIAL_THRESHOLDS.pop(material_id, None)
+    else:
+        MATERIAL_THRESHOLDS[material_id] = body.threshold_mt
     return {"success": True}
 
 
@@ -227,6 +233,8 @@ async def delete_threshold(material_id: str, db: AsyncSession = Depends(get_db),
     deleted = await threshold_repo.delete(db, material_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Threshold not found")
+    from backend.core.material_ledger_config import MATERIAL_THRESHOLDS  # noqa: PLC0415
+    MATERIAL_THRESHOLDS.pop(material_id, None)
     return {"success": True}
 
 
@@ -267,7 +275,7 @@ async def update_user(user_id: str, body: UpdateUser, db: AsyncSession = Depends
     user = await user_repo.get_by_id(db, uuid.UUID(user_id))
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    updates = body.model_dump(exclude_none=True)
+    updates = body.model_dump(exclude_unset=True)
     await user_repo.update(db, user, **updates)
     return {"success": True}
 
@@ -302,7 +310,7 @@ async def get_sharepoint(db: AsyncSession = Depends(get_db), _: User = Depends(r
 
 @router.put("/sharepoint")
 async def update_sharepoint(body: SharePointUpdate, db: AsyncSession = Depends(get_db), user: User = Depends(require_admin)):
-    updates = body.model_dump(exclude_none=True)
+    updates = body.model_dump(exclude_unset=True)
     await settings_repo.upsert_sharepoint_config(db, updated_by=user.id, **updates)
     return {"success": True}
 
