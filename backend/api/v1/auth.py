@@ -15,6 +15,33 @@ from backend.repositories.db import user_repo
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+# ── Login rate limiting ────────────────────────────────────────────────────────
+# Small in-memory brute-force guard: after _MAX_FAILURES failed attempts for the
+# same (client IP, email) pair within _WINDOW_SECONDS, further attempts get 429.
+# In-memory is sufficient for a single-instance deployment (Render free tier);
+# swap for Redis if the API is ever scaled to multiple instances.
+import time as _time
+from collections import defaultdict as _defaultdict
+
+_MAX_FAILURES = 5
+_WINDOW_SECONDS = 15 * 60
+_failed_logins: dict[str, list[float]] = _defaultdict(list)
+
+
+def _rate_limit_key(request: Request, email: str) -> str:
+    client_ip = request.client.host if request.client else "unknown"
+    return f"{client_ip}:{email.strip().lower()}"
+
+
+def _is_rate_limited(key: str) -> bool:
+    cutoff = _time.monotonic() - _WINDOW_SECONDS
+    _failed_logins[key] = [t for t in _failed_logins[key] if t > cutoff]
+    return len(_failed_logins[key]) >= _MAX_FAILURES
+
+
+def _record_failure(key: str) -> None:
+    _failed_logins[key].append(_time.monotonic())
+
 # Cookie policy is env-driven so the SAME code works in two very different setups:
 #   • Local dev (same-site localhost)  → SameSite=lax, Secure=false  (defaults)
 #   • Prod cross-site (Vercel ↔ Render) → SameSite=none, Secure=true  (set via env)
@@ -47,10 +74,18 @@ def _set_auth_cookies(response: Response, user_id: str) -> None:
 
 
 @router.post("/login")
-async def login(body: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)):
+async def login(body: LoginRequest, request: Request, response: Response, db: AsyncSession = Depends(get_db)):
+    key = _rate_limit_key(request, body.email)
+    if _is_rate_limited(key):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed login attempts. Try again in 15 minutes.",
+        )
     user = await user_repo.get_by_email(db, body.email)
     if not user or not user.is_active or not verify_password(body.password, user.hashed_pw):
+        _record_failure(key)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+    _failed_logins.pop(key, None)  # successful login resets the counter
     _set_auth_cookies(response, str(user.id))
     return {"success": True, "data": UserOut(id=str(user.id), email=user.email, role=user.role)}
 

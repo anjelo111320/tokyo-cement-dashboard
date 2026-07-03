@@ -58,6 +58,15 @@ CSV_FILES = {
     "plant_names":     "plant_names.csv",
 }
 
+# Columns each file MUST contain to be usable. A file missing any of these is
+# rejected at load time with a clear error (visible in GET /api/v1/status)
+# instead of silently producing empty dashboards. Optional columns (e.g.
+# "Posting Date") are intentionally not listed.
+REQUIRED_COLUMNS: dict[str, list[str]] = {
+    "material_ledger": ["Plant", "Material", "Material Description", "Obj Type", "Category", "Quantity"],
+    "plant_names":     ["Plant", "Name 1"],
+}
+
 
 class CsvCache:
     """
@@ -115,6 +124,17 @@ class CsvCache:
 
             # Parse the CSV. low_memory=False prevents mixed-type column warnings.
             df = pd.read_csv(path, low_memory=False)
+
+            # Validate the file has the columns the app depends on. A malformed
+            # export is rejected here (old data stays live) rather than loading
+            # and rendering an empty dashboard with no explanation.
+            required = REQUIRED_COLUMNS.get(key, [])
+            missing = [c for c in required if c not in df.columns]
+            if missing:
+                raise CsvReadError(
+                    f"{path.name} is missing required column(s): {', '.join(missing)}. "
+                    f"Found columns: {', '.join(map(str, df.columns[:15]))}"
+                )
 
             # Acquire the lock ONLY after the slow disk read is done,
             # keeping the locked section as short as possible.

@@ -10,7 +10,9 @@ declare module 'axios' {
 export const apiClient = axios.create({
   baseURL: `${config.apiBaseUrl}/api/v1`,
   headers: { 'Content-Type': 'application/json' },
-  timeout: 15_000,
+  // 60s: Render free tier spins the backend down when idle; the first request
+  // after idle waits through a ~50s cold start. 15s made that request fail.
+  timeout: 60_000,
   withCredentials: true,   // send httpOnly auth cookies on every request
 });
 
