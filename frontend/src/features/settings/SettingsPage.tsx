@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Settings, Database, RefreshCw, CheckCircle2, AlertCircle, Bell, Trash2, Plus, Scale, Search, Check, SlidersHorizontal } from 'lucide-react';
+import { Settings, Database, RefreshCw, CheckCircle2, AlertCircle, Bell, Scale, Check, SlidersHorizontal, ChevronRight, ChevronDown, Lock } from 'lucide-react';
+import type { LedgerMaterial } from '@/types/material_ledger.types';
 import { PageHeader } from '@/components/common/PageHeader';
 import { settingsService } from '@/services/settings.service';
 import { materialLedgerService } from '@/services/material_ledger.service';
@@ -9,6 +10,7 @@ import { Skeleton } from '@/components/common/LoadingSkeleton';
 import { formatNumber } from '@/utils/formatters';
 import { cn } from '@/utils/cn';
 import { useSettingsStore, type UnitScale, type ZeroStockMode } from '@/hooks/useSettingsStore';
+import { useAuth } from '@/features/auth/AuthContext';
 
 function SectionCard({ title, icon, children }: {
   title: string; icon: React.ReactNode; children: React.ReactNode;
@@ -156,16 +158,76 @@ function UnitScaleSection() {
   );
 }
 
+// ── Group definitions ─────────────────────────────────────────────────────────
+
+interface MatGroup {
+  id:     string;
+  name:   string;
+  match:  (desc: string) => boolean;
+  border: string;
+  bg:     string;
+  dot:    string;
+  badge:  string;
+}
+
+const MATERIAL_GROUPS: MatGroup[] = [
+  {
+    id: 'sanstha', name: 'Sanstha',
+    match:  d => d.toLowerCase().includes('sanstha'),
+    border: 'border-blue-200',   bg: 'bg-blue-50',
+    dot:    'bg-blue-500',       badge: 'bg-blue-100 text-blue-700',
+  },
+  {
+    id: 'sccl', name: 'SCCL',
+    match:  d => d.toLowerCase().includes('sccl'),
+    border: 'border-indigo-200', bg: 'bg-indigo-50',
+    dot:    'bg-indigo-500',     badge: 'bg-indigo-100 text-indigo-700',
+  },
+  {
+    id: 'mmc', name: 'MMC',
+    match:  d => d.toLowerCase().includes('mmc'),
+    border: 'border-violet-200', bg: 'bg-violet-50',
+    dot:    'bg-violet-500',     badge: 'bg-violet-100 text-violet-700',
+  },
+  {
+    id: 'marine', name: 'Marine',
+    match:  d => d.toLowerCase().includes('marine'),
+    border: 'border-cyan-200',   bg: 'bg-cyan-50',
+    dot:    'bg-cyan-500',       badge: 'bg-cyan-100 text-cyan-700',
+  },
+  {
+    id: 'mahamera', name: 'Mahamera',
+    match:  d => d.toLowerCase().includes('mahamera'),
+    border: 'border-teal-200',   bg: 'bg-teal-50',
+    dot:    'bg-teal-500',       badge: 'bg-teal-100 text-teal-700',
+  },
+];
+
+function GroupToggle({ enabled, onChange, disabled }: { enabled: boolean; onChange: () => void; disabled?: boolean }) {
+  return (
+    <button
+      onClick={e => { e.stopPropagation(); if (!disabled) onChange(); }}
+      role="switch"
+      aria-checked={enabled}
+      title={disabled ? 'Admin only' : enabled ? 'Group enabled — click to disable' : 'Group disabled — click to enable'}
+      className={cn(
+        'relative inline-flex h-5 w-9 items-center rounded-full transition-colors shrink-0',
+        enabled ? 'bg-[#1B3550]' : 'bg-gray-200',
+        disabled && 'cursor-not-allowed opacity-50',
+      )}
+    >
+      <span className={cn(
+        'inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform',
+        enabled ? 'translate-x-4' : 'translate-x-0.5',
+      )} />
+    </button>
+  );
+}
+
 // ── Low Stock Thresholds section ──────────────────────────────────────────────
 function ThresholdsSection() {
+  const { isAdmin } = useAuth();
   const queryClient = useQueryClient();
-  const [editing,       setEditing]       = useState<string | null>(null);
-  const [inputVal,      setInputVal]      = useState('');
-  const [addMaterialId, setAddMaterialId] = useState('');
-  const [addValue,      setAddValue]      = useState('');
-  const [matSearch,     setMatSearch]     = useState('');
-  const [bulkValue,     setBulkValue]     = useState('');
-  const [bulkLoading,   setBulkLoading]   = useState(false);
 
   const { data: thresholds = [], isLoading: thLoading } = useQuery({
     queryKey: queryKeys.inventory.thresholds(),
@@ -179,217 +241,329 @@ function ThresholdsSection() {
     staleTime: 30 * 60_000,
   });
 
-  const saveMutation = useMutation({
-    mutationFn: ({ materialId, val }: { materialId: string; val: number }) =>
-      materialLedgerService.setThreshold(materialId, val),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.inventory.thresholds() });
-      queryClient.invalidateQueries({ queryKey: queryKeys.inventory.alerts() });
-      setEditing(null);
-    },
-  });
+  const [expanded,     setExpanded]     = useState<Set<string>>(new Set());
+  const [groupEnabled, setGroupEnabled] = useState<Record<string, boolean>>({});
+  const [inputs,       setInputs]       = useState<Record<string, string>>({});
+  const [groupBulk,    setGroupBulk]    = useState<Record<string, string>>({});
+  const [groupSaving,  setGroupSaving]  = useState<Record<string, boolean>>({});
+  // Tracks groups the user manually toggled this session so DB refetches don't override them
+  const userToggledRef                  = useRef<Set<string>>(new Set());
 
-  const removeMutation = useMutation({
-    mutationFn: (materialId: string) => materialLedgerService.setThreshold(materialId, 0),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.inventory.thresholds() });
-      queryClient.invalidateQueries({ queryKey: queryKeys.inventory.alerts() });
-    },
-  });
+  // Populate inputs from saved thresholds (only for keys not yet typed by user)
+  useEffect(() => {
+    if (!thresholds.length) return;
+    setInputs(prev => {
+      const next = { ...prev };
+      thresholds.forEach(t => {
+        if (!(t.material_id in next)) {
+          next[t.material_id] = t.min_stock_mt > 0 ? String(t.min_stock_mt) : '';
+        }
+      });
+      return next;
+    });
+  }, [thresholds]);
 
-  // Filtered material list for the search combobox
-  const q = matSearch.trim().toLowerCase();
-  const filteredMaterials = q
-    ? materials.filter(m =>
-        m.material_description.toLowerCase().includes(q) ||
-        m.material_id.includes(q))
-    : materials;
+  // Sync group toggles from DB whenever thresholds or materials load/change.
+  // Groups the user has manually toggled this session are left untouched.
+  useEffect(() => {
+    if (!materials.length) return;
+    setGroupEnabled(prev => {
+      const next = { ...prev };
+      for (const g of MATERIAL_GROUPS) {
+        if (userToggledRef.current.has(g.id)) continue;
+        const mats = materials.filter(m => g.match(m.material_description));
+        next[g.id] = mats.some(m => thresholds.some(t => t.material_id === m.material_id && t.min_stock_mt > 0));
+      }
+      return next;
+    });
+  }, [materials.length, thresholds.length]);
 
-  // Apply one threshold value to every material
-  async function applyToAll() {
-    const val = parseFloat(bulkValue);
-    if (!val || val <= 0 || !materials.length) return;
-    setBulkLoading(true);
+  function toggleExpand(id: string) {
+    setExpanded(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
+
+  async function setAllForGroup(groupId: string, groupMats: LedgerMaterial[]) {
+    const val = parseFloat(groupBulk[groupId] ?? '') || 0;
+    if (val <= 0) return;
+    setInputs(prev => {
+      const next = { ...prev };
+      groupMats.forEach(m => { next[m.material_id] = String(val); });
+      return next;
+    });
+    setGroupSaving(s => ({ ...s, [groupId]: true }));
     try {
-      await Promise.all(
-        materials.map(m => materialLedgerService.setThreshold(m.material_id, val))
-      );
+      await Promise.all(groupMats.map(m => materialLedgerService.setThreshold(m.material_id, val)));
       queryClient.invalidateQueries({ queryKey: queryKeys.inventory.thresholds() });
       queryClient.invalidateQueries({ queryKey: queryKeys.inventory.alerts() });
-      setBulkValue('');
+      setGroupBulk(s => ({ ...s, [groupId]: '' }));
     } finally {
-      setBulkLoading(false);
+      setGroupSaving(s => ({ ...s, [groupId]: false }));
     }
   }
 
+  async function saveGroup(groupId: string, groupMats: LedgerMaterial[], sendZeros = false) {
+    setGroupSaving(s => ({ ...s, [groupId]: true }));
+    try {
+      await Promise.all(
+        groupMats.map(m => {
+          const val = sendZeros ? 0 : (parseFloat(inputs[m.material_id] ?? '') || 0);
+          return materialLedgerService.setThreshold(m.material_id, val);
+        })
+      );
+      queryClient.invalidateQueries({ queryKey: queryKeys.inventory.thresholds() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.inventory.alerts() });
+    } finally {
+      setGroupSaving(s => ({ ...s, [groupId]: false }));
+    }
+  }
+
+  async function toggleGroup(groupId: string, groupMats: LedgerMaterial[]) {
+    userToggledRef.current.add(groupId);
+    const wasEnabled = groupEnabled[groupId] !== false;
+    setGroupEnabled(s => ({ ...s, [groupId]: !wasEnabled }));
+    if (wasEnabled) {
+      // turning off → clear all thresholds for this group from DB
+      await saveGroup(groupId, groupMats, true);
+      // Release manual control so the next refetch re-derives from DB (will show OFF since cleared)
+      userToggledRef.current.delete(groupId);
+    }
+  }
+
+  if (thLoading) return <Skeleton className="h-40 w-full rounded-lg" />;
+
+  const ungrouped = materials.filter(m => !MATERIAL_GROUPS.some(g => g.match(m.material_description)));
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
+      {!isAdmin && (
+        <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-amber-50 border border-amber-200">
+          <Lock size={13} className="text-amber-600 shrink-0" />
+          <p className="text-xs text-amber-700 font-medium">
+            View only — only admins can edit thresholds.
+          </p>
+        </div>
+      )}
       <p className="text-xs text-gray-500">
-        When a plant's closing stock drops below the minimum, it appears in the dashboard alert panel.
+        Expand a group, enter per-material minimums, then click <strong>Apply</strong> to save.
+        Toggle a group OFF to remove all its alerts.
       </p>
 
-      {/* ── Bulk: Apply to all materials ─────────────────────────────── */}
-      <div className="rounded-xl border border-amber-200 bg-amber-50 p-3.5 space-y-2.5">
-        <p className="text-[10px] font-bold uppercase tracking-widest text-amber-700">
-          Apply to all {materials.length} materials at once
-        </p>
-        <div className="flex items-center gap-2 flex-wrap">
-          <input
-            type="number"
-            min="0"
-            step="0.5"
-            placeholder="Min MT (e.g. 100)"
-            value={bulkValue}
-            onChange={e => setBulkValue(e.target.value)}
-            className="w-40 text-xs border border-amber-200 rounded-lg px-2.5 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
-          />
-          <span className="text-xs text-amber-700">MT minimum for every material</span>
-          <button
-            onClick={applyToAll}
-            disabled={!bulkValue || parseFloat(bulkValue) <= 0 || bulkLoading || !materials.length}
-            className="ml-auto inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-40 transition-colors"
+      {MATERIAL_GROUPS.map(group => {
+        const groupMats  = materials.filter(m => group.match(m.material_description));
+        if (!groupMats.length) return null;
+
+        const isExpanded = expanded.has(group.id);
+        const isEnabled  = groupEnabled[group.id] !== false;
+        const isSaving   = groupSaving[group.id] ?? false;
+        const setCount   = groupMats.filter(m =>
+          thresholds.some(t => t.material_id === m.material_id && t.min_stock_mt > 0)
+        ).length;
+
+        return (
+          <div
+            key={group.id}
+            className={cn(
+              'rounded-xl border overflow-hidden transition-all',
+              isEnabled ? group.border : 'border-gray-200',
+              !isEnabled && 'opacity-60',
+            )}
           >
-            {bulkLoading
-              ? <RefreshCw size={11} className="animate-spin" />
-              : <Check size={11} />}
-            {bulkLoading ? 'Saving…' : `Set for All ${materials.length} Materials`}
-          </button>
-        </div>
-      </div>
-
-      {/* ── Existing thresholds list ─────────────────────────────────── */}
-      {thLoading && <Skeleton className="h-20 w-full rounded-lg" />}
-      {!thLoading && thresholds.length === 0 && (
-        <p className="text-sm text-gray-400 italic">No thresholds set — use the panel above or add individually below.</p>
-      )}
-      <div className="space-y-2">
-        {thresholds.map(t => (
-          <div key={t.material_id}
-            className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-semibold text-gray-800 truncate">{t.material_desc}</p>
-              <p className="text-[10px] text-gray-400 font-mono">{t.material_id}</p>
-            </div>
-            {editing === t.material_id ? (
-              <div className="flex items-center gap-2 shrink-0">
-                <input
-                  type="number" min="0" step="0.5"
-                  value={inputVal}
-                  onChange={e => setInputVal(e.target.value)}
-                  className="w-24 text-xs border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary-400"
-                  autoFocus
-                />
-                <span className="text-xs text-gray-500">MT</span>
-                <button
-                  onClick={() => saveMutation.mutate({ materialId: t.material_id, val: parseFloat(inputVal) || 0 })}
-                  disabled={saveMutation.isPending}
-                  className="px-2.5 py-1.5 text-xs font-semibold bg-[#1B3550] text-white rounded-lg hover:bg-[#0D1F2D] disabled:opacity-50"
-                >Save</button>
-                <button onClick={() => setEditing(null)} className="text-xs text-gray-400 hover:text-gray-600">Cancel</button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2 shrink-0">
-                <span className="text-sm font-bold text-[#1B3550]">{formatNumber(t.min_stock_mt, 1)} MT</span>
-                <button
-                  onClick={() => { setEditing(t.material_id); setInputVal(String(t.min_stock_mt)); }}
-                  className="text-xs text-primary-600 hover:text-primary-800 font-medium"
-                >Edit</button>
-                <button
-                  onClick={() => removeMutation.mutate(t.material_id)}
-                  disabled={removeMutation.isPending}
-                  className="text-gray-400 hover:text-red-500 transition-colors"
-                  aria-label="Remove threshold"
-                ><Trash2 size={13} /></button>
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-
-      {/* ── Individual: searchable material picker ───────────────────── */}
-      {materials.length > 0 && (
-        <div className="border border-dashed border-gray-200 rounded-xl p-3.5 space-y-3">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">
-            Set for individual material
-          </p>
-
-          {/* Search input */}
-          <div className="relative">
-            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-            <input
-              type="text"
-              placeholder="Search material name or ID…"
-              value={matSearch}
-              onChange={e => { setMatSearch(e.target.value); setAddMaterialId(''); setAddValue(''); }}
-              className="w-full pl-8 pr-3 py-1.5 text-xs border border-gray-200 rounded-lg bg-gray-50 focus:outline-none focus:ring-2 focus:ring-primary-400"
-            />
-          </div>
-
-          {/* Scrollable material list */}
-          <div className="max-h-48 overflow-y-auto rounded-lg border border-gray-200 divide-y divide-gray-100">
-            {filteredMaterials.length === 0 && (
-              <p className="px-3 py-3 text-xs text-gray-400">No materials match "{matSearch}"</p>
-            )}
-            {filteredMaterials.map(m => {
-              const existing = thresholds.find(t => t.material_id === m.material_id);
-              const isSelected = addMaterialId === m.material_id;
-              return (
-                <button
-                  key={m.material_id}
-                  onClick={() => {
-                    setAddMaterialId(m.material_id);
-                    setAddValue(existing ? String(existing.min_stock_mt) : '');
-                  }}
-                  className={cn(
-                    'w-full flex items-center gap-2.5 px-3 py-2.5 text-left transition-colors',
-                    isSelected ? 'bg-[#1B3550]/5 border-l-2 border-[#1B3550]' : 'hover:bg-gray-50',
-                  )}
-                >
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium text-gray-800 truncate">{m.material_description}</p>
-                    <p className="text-[10px] font-mono text-gray-400">{m.material_id}</p>
-                  </div>
-                  {existing ? (
-                    <span className="text-[10px] font-bold text-green-700 bg-green-100 px-1.5 py-0.5 rounded shrink-0">
-                      {formatNumber(existing.min_stock_mt, 0)} MT
-                    </span>
-                  ) : (
-                    <span className="text-[10px] text-gray-300 shrink-0">No threshold</span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Value + save — shown only when a material is selected */}
-          {addMaterialId && (
-            <div className="flex items-center gap-2 pt-1 flex-wrap">
-              <span className="text-xs text-gray-600 flex-1 min-w-0 truncate">
-                {materials.find(m => m.material_id === addMaterialId)?.material_description}
-              </span>
-              <input
-                type="number" min="0" step="0.5" placeholder="Min MT"
-                value={addValue}
-                onChange={e => setAddValue(e.target.value)}
-                className="w-24 text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary-400"
-                autoFocus
-              />
+            {/* ── Header ───────────────────────────────────────────── */}
+            <div className={cn(
+              'flex items-center gap-2 px-4 py-3 transition-colors',
+              isEnabled ? group.bg : 'bg-gray-50',
+            )}>
+              {/* click-to-expand zone */}
               <button
-                onClick={() => {
-                  if (!addMaterialId || !addValue) return;
-                  saveMutation.mutate({ materialId: addMaterialId, val: parseFloat(addValue) });
-                  setAddMaterialId(''); setAddValue(''); setMatSearch('');
-                }}
-                disabled={!addValue || saveMutation.isPending}
-                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold bg-[#1B3550] text-white rounded-lg hover:bg-[#0D1F2D] disabled:opacity-40"
+                onClick={() => toggleExpand(group.id)}
+                className="flex items-center gap-2 flex-1 min-w-0 text-left"
               >
-                <Plus size={12} />
-                {thresholds.some(t => t.material_id === addMaterialId) ? 'Update' : 'Add'}
+                <span className={cn('w-2.5 h-2.5 rounded-full shrink-0', group.dot)} />
+                <span className="text-sm font-semibold text-gray-900 truncate">{group.name}</span>
+                <span className={cn('text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0', group.badge)}>
+                  {groupMats.length} mat{groupMats.length !== 1 ? 's' : ''}
+                </span>
+                {setCount > 0 && (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-green-100 text-green-700 shrink-0">
+                    {setCount} set
+                  </span>
+                )}
+              </button>
+
+              {/* group-level bulk MT input — admin only */}
+              {isAdmin && (
+                <div className="flex items-center gap-1 shrink-0">
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.5"
+                    placeholder="MT"
+                    value={groupBulk[group.id] ?? ''}
+                    onChange={e => setGroupBulk(s => ({ ...s, [group.id]: e.target.value }))}
+                    onKeyDown={e => { if (e.key === 'Enter') setAllForGroup(group.id, groupMats); }}
+                    disabled={!isEnabled}
+                    className="w-14 text-xs border border-gray-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary-400 text-center bg-white disabled:opacity-40"
+                  />
+                  <button
+                    onClick={() => setAllForGroup(group.id, groupMats)}
+                    disabled={!groupBulk[group.id] || parseFloat(groupBulk[group.id] ?? '') <= 0 || isSaving || !isEnabled}
+                    className="px-2 py-1 text-[10px] font-bold rounded-lg bg-[#1B3550]/10 text-[#1B3550] hover:bg-[#1B3550]/20 disabled:opacity-30 transition-colors whitespace-nowrap"
+                  >
+                    Set all
+                  </button>
+                </div>
+              )}
+
+              <GroupToggle
+                enabled={isEnabled}
+                onChange={() => toggleGroup(group.id, groupMats)}
+                disabled={!isAdmin}
+              />
+
+              <button onClick={() => toggleExpand(group.id)} className="shrink-0 text-gray-400 hover:text-gray-600">
+                {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
               </button>
             </div>
-          )}
-        </div>
-      )}
+
+            {/* ── Per-material rows ────────────────────────────────── */}
+            {isExpanded && (
+              <div className={cn('border-t border-gray-100 divide-y divide-gray-100', !isEnabled && 'opacity-50 pointer-events-none')}>
+                {groupMats.map(m => {
+                  const saved = thresholds.find(t => t.material_id === m.material_id);
+                  return (
+                    <div key={m.material_id} className="flex items-center gap-3 px-4 py-2.5 bg-white">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium text-gray-800 truncate">{m.material_description}</p>
+                        <p className="text-[10px] font-mono text-gray-400">{m.material_id}</p>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {isAdmin ? (
+                          <>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.5"
+                              placeholder="MT"
+                              value={inputs[m.material_id] ?? ''}
+                              onChange={e => setInputs(s => ({ ...s, [m.material_id]: e.target.value }))}
+                              className="w-20 text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary-400 text-center bg-white"
+                            />
+                            <span className="text-[10px] text-gray-400">MT</span>
+                          </>
+                        ) : (
+                          <span className="text-sm font-bold text-gray-700">
+                            {saved && saved.min_stock_mt > 0 ? `${formatNumber(saved.min_stock_mt, 0)} MT` : '—'}
+                          </span>
+                        )}
+                        {saved && saved.min_stock_mt > 0 && isAdmin && (
+                          <span className="text-[10px] text-green-600 font-semibold whitespace-nowrap">
+                            saved: {formatNumber(saved.min_stock_mt, 0)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Apply group — admin only */}
+                {isAdmin && (
+                  <div className="px-4 py-3 bg-gray-50 flex justify-end">
+                    <button
+                      onClick={() => saveGroup(group.id, groupMats)}
+                      disabled={isSaving}
+                      className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold bg-[#1B3550] text-white rounded-lg hover:bg-[#0D1F2D] transition-colors disabled:opacity-40"
+                    >
+                      {isSaving
+                        ? <><RefreshCw size={11} className="animate-spin" /> Saving…</>
+                        : <><Check size={11} /> Apply {group.name}</>
+                      }
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {/* ── Ungrouped materials ───────────────────────────────────────── */}
+      {ungrouped.length > 0 && (() => {
+        const isExpanded = expanded.has('__other__');
+        const isSaving   = groupSaving['__other__'] ?? false;
+        return (
+          <div className="rounded-xl border border-gray-200 overflow-hidden">
+            <button
+              onClick={() => toggleExpand('__other__')}
+              className="w-full flex items-center gap-3 px-4 py-3 text-left bg-gray-50 hover:bg-gray-100 transition-colors"
+            >
+              <span className="w-2.5 h-2.5 rounded-full bg-gray-400 shrink-0" />
+              <span className="text-sm font-semibold text-gray-700 flex-1">Other</span>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
+                {ungrouped.length} material{ungrouped.length !== 1 ? 's' : ''}
+              </span>
+              {isExpanded
+                ? <ChevronDown size={14} className="text-gray-400 shrink-0" />
+                : <ChevronRight size={14} className="text-gray-400 shrink-0" />
+              }
+            </button>
+
+            {isExpanded && (
+              <div className="border-t border-gray-100 divide-y divide-gray-100">
+                {ungrouped.map(m => {
+                  const saved = thresholds.find(t => t.material_id === m.material_id);
+                  return (
+                    <div key={m.material_id} className="flex items-center gap-3 px-4 py-2.5 bg-white">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium text-gray-800 truncate">{m.material_description}</p>
+                        <p className="text-[10px] font-mono text-gray-400">{m.material_id}</p>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {isAdmin ? (
+                          <>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.5"
+                              placeholder="MT"
+                              value={inputs[m.material_id] ?? ''}
+                              onChange={e => setInputs(s => ({ ...s, [m.material_id]: e.target.value }))}
+                              className="w-20 text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary-400 text-center bg-white"
+                            />
+                            <span className="text-[10px] text-gray-400">MT</span>
+                            {saved && saved.min_stock_mt > 0 && (
+                              <span className="text-[10px] text-green-600 font-semibold whitespace-nowrap">
+                                saved: {formatNumber(saved.min_stock_mt, 0)}
+                              </span>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-sm font-bold text-gray-700">
+                            {saved && saved.min_stock_mt > 0 ? `${formatNumber(saved.min_stock_mt, 0)} MT` : '—'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+                {isAdmin && (
+                  <div className="px-4 py-3 bg-gray-50 flex justify-end">
+                    <button
+                      onClick={() => saveGroup('__other__', ungrouped)}
+                      disabled={isSaving}
+                      className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold bg-[#1B3550] text-white rounded-lg hover:bg-[#0D1F2D] transition-colors disabled:opacity-40"
+                    >
+                      {isSaving
+                        ? <><RefreshCw size={11} className="animate-spin" /> Saving…</>
+                        : <><Check size={11} /> Apply Other</>
+                      }
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }

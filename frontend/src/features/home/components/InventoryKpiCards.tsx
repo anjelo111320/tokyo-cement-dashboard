@@ -1,6 +1,6 @@
 /** InventoryKpiCards — 4 top-level KPI cards for the inventory dashboard. */
 
-import { Package, TrendingUp, TrendingDown, AlertTriangle } from 'lucide-react';
+import { Package, AlertTriangle } from 'lucide-react';
 import { KpiCardSkeleton } from '@/components/common/LoadingSkeleton';
 import { convertQty, type UnitScale } from '@/hooks/useSettingsStore';
 import type { InventorySummary } from '@/types/material_ledger.types';
@@ -47,8 +47,8 @@ function Card({ title, value, unit, subtitle, icon, accentColor, highlight }: Ca
 export function InventoryKpiCards({ summary, isLoading, unitScale }: Props) {
   if (isLoading) {
     return (
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {Array.from({ length: 4 }).map((_, i) => <KpiCardSkeleton key={i} />)}
+      <div className="grid grid-cols-2 gap-4">
+        {Array.from({ length: 2 }).map((_, i) => <KpiCardSkeleton key={i} />)}
       </div>
     );
   }
@@ -56,12 +56,10 @@ export function InventoryKpiCards({ summary, isLoading, unitScale }: Props) {
 
   const scale = unitScale ?? { unit: 'MT' as const, bagsPerMt: 1 };
   const alertCount = summary.alert_count;
-  const onHand   = convertQty(summary.total_on_hand_mt,     scale);
-  const transOut = convertQty(summary.total_in_transit_out,  scale);
-  const transIn  = convertQty(summary.total_in_transit_in,   scale);
+  const onHand = convertQty(summary.total_on_hand_mt, scale);
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <div className="grid grid-cols-2 gap-4">
       <Card
         title="Available Stock"
         value={onHand.value}
@@ -69,22 +67,6 @@ export function InventoryKpiCards({ summary, isLoading, unitScale }: Props) {
         subtitle="Physical stock balance (EB)"
         icon={<Package size={18} />}
         accentColor="#1B3550"
-      />
-      <Card
-        title="In Transit OUT"
-        value={transOut.value}
-        unit={transOut.unit}
-        subtitle="Dispatched from factories"
-        icon={<TrendingUp size={18} />}
-        accentColor="#F59E0B"
-      />
-      <Card
-        title="In Transit IN"
-        value={transIn.value}
-        unit={transIn.unit}
-        subtitle="Received at depots"
-        icon={<TrendingDown size={18} />}
-        accentColor="#22C55E"
       />
       <Card
         title="⚠ Low Stock Alerts"

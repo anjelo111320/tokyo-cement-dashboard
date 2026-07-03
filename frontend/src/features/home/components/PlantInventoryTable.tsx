@@ -1,7 +1,7 @@
 /** PlantInventoryTable — per-plant inventory breakdown table. Alerts sort to top. */
 
 import { useState, useEffect } from 'react';
-import { X, Warehouse, TrendingDown, TrendingUp, ArrowDownToLine, Package, ArrowLeftRight, Info } from 'lucide-react';
+import { X, Warehouse, TrendingDown, TrendingUp, ArrowDownToLine, Package, ArrowLeftRight, Info, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react';
 import { cn } from '@/utils/cn';
 import { Skeleton } from '@/components/common/LoadingSkeleton';
 import { EmptyState } from '@/components/common/EmptyState';
@@ -377,8 +377,11 @@ export function PlantInventoryTable({ summary, isLoading, unitScale, zeroStockMo
   const scale = unitScale ?? { unit: 'MT' as const, bagsPerMt: 1 };
   const unit  = scale.unit;
 
-  const [selectedRow, setSelectedRow] = useState<PlantInventoryRow | null>(null);
-  const [hideZeros,   setHideZeros]   = useState(true);
+  const [selectedRow,      setSelectedRow]      = useState<PlantInventoryRow | null>(null);
+  const [hideZeros,        setHideZeros]        = useState(true);
+  const [showAlertsOnly,   setShowAlertsOnly]   = useState(true);
+  const [sortCol,          setSortCol]          = useState<'on_hand_mt' | 'in_transit_out_mt' | 'in_transit_in_mt' | null>(null);
+  const [sortDir,          setSortDir]          = useState<'asc' | 'desc'>('desc');
 
   const isOverridden = settingsMode !== undefined && zeroStockMode !== settingsMode;
 
@@ -391,9 +394,28 @@ export function PlantInventoryTable({ summary, isLoading, unitScale, zeroStockMo
     onModeChange?.(settingsMode ?? 'accurate');
   }
 
-  const allRows     = summary?.rows ?? [];
-  const zeroRows    = allRows.filter(r => r.on_hand_mt === 0 && r.in_transit_out_mt === 0 && r.in_transit_in_mt === 0);
-  const visibleRows = hideZeros ? allRows.filter(r => !(r.on_hand_mt === 0 && r.in_transit_out_mt === 0 && r.in_transit_in_mt === 0)) : allRows;
+  const allRows         = summary?.rows ?? [];
+  const zeroRows        = allRows.filter(r => r.on_hand_mt === 0 && r.in_transit_out_mt === 0 && r.in_transit_in_mt === 0);
+  const alertRows       = allRows.filter(r => r.status === 'low' || r.status === 'out');
+  const afterZeroFilter = hideZeros ? allRows.filter(r => !(r.on_hand_mt === 0 && r.in_transit_out_mt === 0 && r.in_transit_in_mt === 0)) : allRows;
+  const afterAlertFilter = showAlertsOnly ? afterZeroFilter.filter(r => r.status === 'low' || r.status === 'out') : afterZeroFilter;
+  const visibleRows     = sortCol
+    ? [...afterAlertFilter].sort((a, b) => sortDir === 'asc' ? a[sortCol] - b[sortCol] : b[sortCol] - a[sortCol])
+    : afterAlertFilter;
+
+  function handleSort(col: 'on_hand_mt' | 'in_transit_out_mt' | 'in_transit_in_mt') {
+    if (sortCol === col) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortCol(col);
+      setSortDir('desc');
+    }
+  }
+
+  function SortIcon({ col }: { col: 'on_hand_mt' | 'in_transit_out_mt' | 'in_transit_in_mt' }) {
+    if (sortCol !== col) return <ChevronsUpDown size={10} className="text-gray-300" />;
+    return sortDir === 'asc' ? <ChevronUp size={10} className="text-[#1B3550]" /> : <ChevronDown size={10} className="text-[#1B3550]" />;
+  }
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
@@ -454,20 +476,50 @@ export function PlantInventoryTable({ summary, isLoading, unitScale, zeroStockMo
         <table className="w-full text-xs" aria-label="Plant inventory table">
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50">
+              <th className="py-2.5 px-4 font-semibold text-gray-500 uppercase tracking-wide text-[10px] whitespace-nowrap text-left">Plant</th>
+              <th className="py-2.5 px-4 font-semibold text-gray-500 uppercase tracking-wide text-[10px] whitespace-nowrap text-left">Location</th>
               {(
                 [
-                  { label: 'Plant',           align: 'text-left'  },
-                  { label: 'Location',        align: 'text-left'  },
-                  { label: 'Available Stock', align: 'text-right' },
-                  { label: 'In Transit OUT',  align: 'text-right' },
-                  { label: 'In Transit IN',   align: 'text-right' },
-                  { label: 'Status',          align: 'text-left'  },
+                  { label: 'Available Stock', col: 'on_hand_mt'        },
+                  { label: 'In Transit OUT',  col: 'in_transit_out_mt' },
+                  { label: 'In Transit IN',   col: 'in_transit_in_mt'  },
                 ] as const
-              ).map(({ label, align }) => (
-                <th key={label} className={cn('py-2.5 px-4 font-semibold text-gray-500 uppercase tracking-wide text-[10px] whitespace-nowrap', align)}>
-                  {label}
+              ).map(({ label, col }) => (
+                <th key={col} className="py-2.5 px-4 text-right whitespace-nowrap">
+                  <button
+                    onClick={() => handleSort(col)}
+                    className={cn(
+                      'inline-flex items-center justify-end gap-1 font-semibold uppercase tracking-wide text-[10px] transition-colors',
+                      sortCol === col ? 'text-[#1B3550]' : 'text-gray-500 hover:text-gray-800',
+                    )}
+                  >
+                    {label}
+                    <SortIcon col={col} />
+                  </button>
                 </th>
               ))}
+              <th className="py-2.5 px-4 text-left">
+                <div className="flex items-center gap-1.5">
+                  <span className="font-semibold text-gray-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Status</span>
+                  <button
+                    onClick={() => setShowAlertsOnly(v => !v)}
+                    title={showAlertsOnly ? 'Showing low & out only — click to clear' : 'Show only low & out stock plants'}
+                    className={cn(
+                      'flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold border transition-all duration-150',
+                      showAlertsOnly
+                        ? 'bg-amber-100 text-amber-700 border-amber-300'
+                        : 'bg-gray-100 text-gray-400 border-gray-200 hover:bg-gray-200 hover:text-gray-600',
+                    )}
+                  >
+                    ⚠
+                    {showAlertsOnly && alertRows.length > 0 && (
+                      <span className="bg-amber-200 text-amber-800 text-[9px] font-bold px-1 py-0.5 rounded-full leading-none">
+                        {alertRows.length}
+                      </span>
+                    )}
+                  </button>
+                </div>
+              </th>
             </tr>
           </thead>
           <tbody>

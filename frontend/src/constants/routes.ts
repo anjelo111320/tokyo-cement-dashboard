@@ -3,4 +3,6 @@ export const ROUTES = {
   MAP:      '/map',
   LEDGER:   '/material-ledger',
   SETTINGS: '/settings',
+  LOGIN:    '/login',
+  ADMIN:    '/admin',
 } as const;

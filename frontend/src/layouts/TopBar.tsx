@@ -1,10 +1,28 @@
-import { RefreshCw } from 'lucide-react';
+import { Bell, RefreshCw } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { apiClient } from '@/services/api.client';
 import { useDataRefresh } from '@/hooks/useDataRefresh';
 
+function useUnreadCount() {
+  const { data } = useQuery({
+    queryKey: ['notifications', 'me'],
+    queryFn: async () => {
+      try {
+        const res = await apiClient.get<{ success: boolean; data: { is_read: boolean }[] }>('/notifications/me');
+        return res.data.data.filter((n: { is_read: boolean }) => !n.is_read).length;
+      } catch {
+        return 0;
+      }
+    },
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+  });
+  return data ?? 0;
+}
 
-/** Mobile-only top bar with the INSEE logo and a manual CSV sync button. */
 export function TopBar() {
   const { isRefreshing, handleRefresh } = useDataRefresh();
+  const unread = useUnreadCount();
 
   return (
     <header
@@ -22,6 +40,16 @@ export function TopBar() {
           Finished Goods<br />Inventory Hub
         </p>
       </div>
+
+      {/* Notification bell (stub — badge always 0 until push is wired) */}
+      <button className="relative text-white p-1" aria-label="Notifications">
+        <Bell size={18} />
+        {unread > 0 && (
+          <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-[#E05540] text-white text-[9px] font-bold flex items-center justify-center">
+            {unread > 9 ? '9+' : unread}
+          </span>
+        )}
+      </button>
 
       <button
         onClick={handleRefresh}

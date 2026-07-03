@@ -30,39 +30,26 @@ from backend.core.middleware import add_cors, TimingMiddleware
 from backend.core.scheduler import start_scheduler, stop_scheduler
 from backend.repositories.csv.csv_base import csv_cache
 
-# Configure logging before anything else so every import below can log correctly.
 configure_logging()
 logger = get_logger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """
-    Lifespan context manager — runs startup code before the server accepts
-    requests, and shutdown code when the server is stopping.
-
-    Startup sequence:
-      1. Load all CSV files into the in-memory cache (so the first API
-         request is never waiting for a slow disk read).
-      2. Start the APScheduler background job that refreshes the cache
-         every 15 minutes.
-
-    Shutdown sequence:
-      1. Stop the scheduler gracefully so no job is mid-execution.
-    """
     logger.info("startup", app=settings.app_name, version=settings.app_version)
 
-    # Step 1 — Prime the CSV cache immediately on startup.
-    # Without this, the first API call after a server restart would return
-    # an error because the cache would be empty.
-    csv_cache.load_all()
+    # Initialise PostgreSQL engine if DATABASE_URL is configured
+    if settings.database_url:
+        from backend.db.database import init_engine
+        from sqlalchemy.ext.asyncio import AsyncEngine
+        init_engine(settings.database_url)
+        logger.info("database_connected", url=settings.database_url.split("@")[-1])
 
-    # Step 2 — Start the background scheduler (every 15 min re-reads CSVs).
+    csv_cache.load_all()
     start_scheduler()
 
-    yield  # Server is running — handle requests between startup and shutdown.
+    yield
 
-    # Shutdown — stop the scheduler so it doesn't fire after the process exits.
     stop_scheduler()
     logger.info("shutdown")
 

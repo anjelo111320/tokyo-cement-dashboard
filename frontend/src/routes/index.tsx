@@ -3,11 +3,15 @@ import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import { RootLayout } from '@/layouts/RootLayout';
 import { ROUTES } from '@/constants/routes';
 import { Skeleton } from '@/components/common/LoadingSkeleton';
+import { RequireAuth } from '@/components/common/RequireAuth';
+import { RequireAdmin } from '@/components/common/RequireAdmin';
+import { LoginPage } from '@/features/auth/LoginPage';
 
-const HomePage   = lazy(() => import('@/features/home/HomePage').then((m) => ({ default: m.HomePage })));
-const MapPage    = lazy(() => import('@/features/map/MapPage').then((m) => ({ default: m.MapPage })));
-const ReportPage = lazy(() => import('@/features/report/ReportPage').then((m) => ({ default: m.ReportPage })));
-const SettingsPage = lazy(() => import('@/features/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })));
+const HomePage    = lazy(() => import('@/features/home/HomePage').then(m => ({ default: m.HomePage })));
+const MapPage     = lazy(() => import('@/features/map/MapPage').then(m => ({ default: m.MapPage })));
+const ReportPage  = lazy(() => import('@/features/report/ReportPage').then(m => ({ default: m.ReportPage })));
+const SettingsPage = lazy(() => import('@/features/settings/SettingsPage').then(m => ({ default: m.SettingsPage })));
+const AdminPage   = lazy(() => import('@/features/admin/AdminPage').then(m => ({ default: m.AdminPage })));
 
 function PageLoader() {
   return (
@@ -23,8 +27,16 @@ function PageLoader() {
 
 const router = createBrowserRouter([
   {
+    path: ROUTES.LOGIN,
+    element: <LoginPage />,
+  },
+  {
     path: '/',
-    element: <RootLayout />,
+    element: (
+      <RequireAuth>
+        <RootLayout />
+      </RequireAuth>
+    ),
     children: [
       {
         index: true,
@@ -41,6 +53,14 @@ const router = createBrowserRouter([
       {
         path: ROUTES.SETTINGS,
         element: <Suspense fallback={<PageLoader />}><SettingsPage /></Suspense>,
+      },
+      {
+        path: ROUTES.ADMIN,
+        element: (
+          <RequireAdmin>
+            <Suspense fallback={<PageLoader />}><AdminPage /></Suspense>
+          </RequireAdmin>
+        ),
       },
     ],
   },

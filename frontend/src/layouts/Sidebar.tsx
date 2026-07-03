@@ -1,10 +1,11 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Map, FileBarChart2, RefreshCw, Settings } from 'lucide-react';
+import { LayoutDashboard, Map, FileBarChart2, RefreshCw, Settings, ShieldCheck, LogOut } from 'lucide-react';
 import { ROUTES } from '@/constants/routes';
 import { useSidebar } from '@/contexts/SidebarContext';
 import { useIsMobile } from '@/hooks/useMediaQuery';
 import { cn } from '@/utils/cn';
 import { useDataRefresh } from '@/hooks/useDataRefresh';
+import { useAuth } from '@/features/auth/AuthContext';
 
 const NAV_ITEMS = [
   { to: ROUTES.HOME,     icon: LayoutDashboard, label: 'Dashboard' },
@@ -17,6 +18,7 @@ export function Sidebar() {
   const { isOpen, close } = useSidebar();
   const isMobile = useIsMobile();
   const { isRefreshing, handleRefresh } = useDataRefresh();
+  const { user, isAdmin, logout } = useAuth();
 
   if (isMobile && !isOpen) return null;
 
@@ -57,20 +59,53 @@ export function Sidebar() {
                 </NavLink>
               </li>
             ))}
+
+            {/* Admin link — only shown to admin role */}
+            {isAdmin && (
+              <li>
+                <NavLink
+                  to={ROUTES.ADMIN}
+                  onClick={isMobile ? close : undefined}
+                  className={({ isActive }) => cn(
+                    'flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-150 text-sm font-medium',
+                    isActive
+                      ? 'bg-[#E05540]/20 text-[#E05540] border-l-[3px] border-[#E05540] pl-2.25'
+                      : 'text-[#E05540]/70 hover:bg-[#1B3550] hover:text-[#E05540]',
+                  )}
+                >
+                  <ShieldCheck size={18} aria-hidden="true" />
+                  Admin Panel
+                </NavLink>
+              </li>
+            )}
           </ul>
         </nav>
 
-        {/* Footer — sync status and manual refresh trigger */}
-        <div className="px-4 py-4 border-t border-[#1B3550] flex items-center justify-between">
-          <p className="text-[10px] text-[#3D8BAD]">CSV sync every 15 min</p>
-          <button
-            onClick={handleRefresh}
-            disabled={isRefreshing}
-            className="text-[#3D8BAD] hover:text-white transition-colors disabled:opacity-50"
-            aria-label="Sync data now"
-          >
-            <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
-          </button>
+        {/* Footer */}
+        <div className="px-4 py-3 border-t border-[#1B3550] space-y-2">
+          {/* User info */}
+          {user && (
+            <div className="flex items-center justify-between">
+              <div className="min-w-0">
+                <p className="text-[10px] text-[#89BDD3] truncate">{user.email}</p>
+                <p className="text-[9px] text-[#3D8BAD] uppercase tracking-widest">{user.role}</p>
+              </div>
+              <button onClick={() => logout()} className="text-[#3D8BAD] hover:text-[#E05540] transition-colors ml-2" title="Sign out">
+                <LogOut size={14} />
+              </button>
+            </div>
+          )}
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] text-[#3D8BAD]">CSV sync every 15 min</p>
+            <button
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              className="text-[#3D8BAD] hover:text-white transition-colors disabled:opacity-50"
+              aria-label="Sync data now"
+            >
+              <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
+            </button>
+          </div>
         </div>
       </aside>
     </>
