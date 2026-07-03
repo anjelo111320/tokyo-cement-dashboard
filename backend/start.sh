@@ -15,6 +15,11 @@ if [ -n "$DATABASE_URL" ]; then
   # Reads BOOTSTRAP_ADMIN_EMAIL / BOOTSTRAP_ADMIN_PASSWORD from the env.
   python -m backend.scripts.bootstrap_admin \
     || echo "[start] WARNING: admin bootstrap failed — check BOOTSTRAP_ADMIN_* env vars"
+
+  # Populate plants + materials tables from the CSV so the admin panel has data.
+  # Inserts only missing rows — never overwrites admin edits.
+  python -m backend.scripts.seed_reference \
+    || echo "[start] WARNING: reference seed failed — admin panel may be empty"
 else
   echo "[start] WARNING: DATABASE_URL not set — skipping migrations. Auth/admin features are disabled until it is configured."
 fi
