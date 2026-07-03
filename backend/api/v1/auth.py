@@ -15,7 +15,15 @@ from backend.repositories.db import user_repo
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-_COOKIE_OPTS = dict(httponly=True, samesite="lax", secure=False)
+# Cookie policy is env-driven so the SAME code works in two very different setups:
+#   • Local dev (same-site localhost)  → SameSite=lax, Secure=false  (defaults)
+#   • Prod cross-site (Vercel ↔ Render) → SameSite=none, Secure=true  (set via env)
+# Browsers require Secure=true whenever SameSite=none, so set them together.
+_COOKIE_OPTS = dict(
+    httponly=True,
+    samesite=settings.cookie_samesite,
+    secure=settings.cookie_secure,
+)
 
 
 class LoginRequest(BaseModel):

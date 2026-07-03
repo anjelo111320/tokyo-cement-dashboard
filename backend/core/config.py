@@ -32,6 +32,14 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 7
 
+    # ── Auth cookies ──────────────────────────────────────────────────────────
+    # Defaults suit local dev (same-site http://localhost). For a cross-site
+    # deploy (frontend and backend on different domains, e.g. Vercel + Render)
+    # set COOKIE_SAMESITE=none and COOKIE_SECURE=true — browsers only send
+    # SameSite=None cookies when they are also marked Secure.
+    cookie_samesite: str = "lax"
+    cookie_secure: bool = False
+
     model_config = SettingsConfigDict(
         env_file=str(Path(__file__).parent.parent / ".env"),  # always backend/.env
         env_file_encoding="utf-8",
