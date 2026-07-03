@@ -2,7 +2,7 @@
  * common.types.ts — Shared API envelope types used by every service call.
  *
  * These mirror the Pydantic schemas in backend/schemas/common.py exactly.
- * All API responses are wrapped in ApiResponse<T> or PaginatedApiResponse<T>.
+ * All API responses are wrapped in ApiResponse<T>.
  */
 
 export interface ApiMeta {
@@ -18,18 +18,4 @@ export interface ApiResponse<T> {
   meta: ApiMeta;
 }
 
-/** Paginated list response envelope. */
-export interface PaginatedApiResponse<T> {
-  success: boolean;
-  data: T[];
-  pagination: Pagination;
-  meta: ApiMeta;
-}
-
-export interface Pagination {
-  page: number;
-  page_size: number;
-  total_items: number;
-  total_pages: number;
-}
 

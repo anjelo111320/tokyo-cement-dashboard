@@ -5,7 +5,6 @@ Thin route handlers — all business logic is in MaterialLedgerService.
 
 Endpoints:
   GET /api/v1/material-ledger/kpis               → KPI cards
-  GET /api/v1/material-ledger/movements          → paginated raw movement table
   GET /api/v1/material-ledger/inventory-summary  → per-plant on-hand + transit
   GET /api/v1/material-ledger/inventory-alerts   → low-stock alerts
   GET /api/v1/material-ledger/stock-transfers    → inter-plant transfer rows
@@ -14,7 +13,6 @@ Endpoints:
   GET /api/v1/material-ledger/location-summary   → brand × location grid
 """
 
-import math
 from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select as sa_select
@@ -23,9 +21,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.db.database import get_db
 from backend.db.models.plant import Plant as PlantModel
 from backend.db.models.material import Material as MaterialModel
-from backend.schemas.common import ApiResponse, PaginatedResponse, Pagination, ApiMeta
+from backend.schemas.common import ApiResponse
 from backend.schemas.material_ledger import (
-    LedgerKpiSchema, MovementRowSchema, MaterialSchema, PlantSchema,
+    LedgerKpiSchema, MaterialSchema, PlantSchema,
     StockTransferSchema, InventorySummarySchema, InventoryAlertsSchema,
     InventoryReportSchema, LocationSummarySchema,
 )
@@ -95,31 +93,6 @@ async def get_kpis(
 ):
     """Opening stock, closing stock, total receipts, total consumption."""
     return ApiResponse(data=_svc.get_kpis(plant_id=plant_id, material_id=material_id))
-
-
-@router.get("/movements", response_model=PaginatedResponse[MovementRowSchema])
-async def get_movements(
-    plant_id: Optional[str] = Query(None),
-    material_id: Optional[str] = Query(None),
-    obj_type: Optional[str] = Query(None, description="CA / BV / VM"),
-    category: Optional[str] = Query(None, description="AB / ZU / KB / VN / EB"),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, le=100),
-):
-    """Full paginated movement table. extra_fields column passes through new CSV columns."""
-    items, total = _svc.get_movements(
-        plant_id=plant_id, material_id=material_id,
-        obj_type=obj_type, category=category,
-        page=page, page_size=page_size,
-    )
-    return PaginatedResponse(
-        data=items,
-        pagination=Pagination(
-            page=page, page_size=page_size,
-            total_items=total, total_pages=math.ceil(total / page_size),
-        ),
-        meta=ApiMeta(),
-    )
 
 
 @router.get("/inventory-summary", response_model=ApiResponse[InventorySummarySchema])

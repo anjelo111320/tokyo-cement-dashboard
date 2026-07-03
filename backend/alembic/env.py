@@ -20,7 +20,6 @@ import backend.db.models.plant           # noqa: F401
 import backend.db.models.material        # noqa: F401
 import backend.db.models.app_setting     # noqa: F401
 import backend.db.models.material_threshold  # noqa: F401
-import backend.db.models.notification    # noqa: F401
 import backend.db.models.sharepoint_config  # noqa: F401
 import backend.db.models.ingestion_log   # noqa: F401
 

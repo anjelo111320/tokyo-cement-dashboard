@@ -18,20 +18,6 @@ export function useLedgerKpis(plantId?: string, materialId?: string) {
   });
 }
 
-export function useLedgerMovements(
-  plantId?: string,
-  materialId?: string,
-  objType?: string,
-  category?: string,
-  page = 1,
-) {
-  return useQuery({
-    queryKey: queryKeys.ledger.movements(plantId, materialId, objType, category, page),
-    queryFn: () => materialLedgerService.getMovements({ plant_id: plantId, material_id: materialId, obj_type: objType, category, page }),
-    staleTime: 5 * 60_000,
-  });
-}
-
 export function useLedgerTransfers(plantId?: string, materialId?: string) {
   return useQuery({
     queryKey: queryKeys.ledger.transfers(plantId, materialId),

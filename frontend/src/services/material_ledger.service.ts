@@ -1,19 +1,10 @@
-import type { ApiResponse, PaginatedApiResponse } from '@/types/common.types';
+import type { ApiResponse } from '@/types/common.types';
 import type {
-  LedgerKpi, MovementRow, LedgerMaterial, LedgerPlant, StockTransfer,
+  LedgerKpi, LedgerMaterial, LedgerPlant, StockTransfer,
   InventorySummary, InventoryAlerts, MaterialThreshold, InventoryReport,
   LocationSummary,
 } from '@/types/material_ledger.types';
 import { apiClient } from './api.client';
-
-interface MovementParams {
-  plant_id?: string;
-  material_id?: string;
-  obj_type?: string;
-  category?: string;
-  page?: number;
-  page_size?: number;
-}
 
 export const materialLedgerService = {
   async getKpis(plantId?: string, materialId?: string): Promise<LedgerKpi> {
@@ -22,11 +13,6 @@ export const materialLedgerService = {
     if (materialId) params.material_id = materialId;
     const res = await apiClient.get<ApiResponse<LedgerKpi>>('/material-ledger/kpis', { params });
     return res.data.data;
-  },
-
-  async getMovements(params: MovementParams): Promise<PaginatedApiResponse<MovementRow>> {
-    const res = await apiClient.get<PaginatedApiResponse<MovementRow>>('/material-ledger/movements', { params });
-    return res.data;
   },
 
   async getStockTransfers(plantId?: string, materialId?: string): Promise<StockTransfer> {

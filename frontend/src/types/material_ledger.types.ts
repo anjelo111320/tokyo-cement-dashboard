@@ -18,25 +18,6 @@ export interface LedgerKpi {
   unit:                  string;
 }
 
-export interface MovementRow {
-  plant_id:             string;
-  material_id:          string;
-  material_description: string;
-  obj_type:             string;
-  obj_type_label:       string;
-  category:             string;
-  category_label:       string;
-  category_color:       string;
-  movement_description: string;
-  proc_cat_name:        string | null;
-  proc_cat_label:       string;
-  quantity:             number;
-  price:                number | null;
-  unit:                 string;
-  // Any new CSV column appears here automatically — no type change needed.
-  extra_fields:         Record<string, unknown>;
-}
-
 export interface StockTransferRow {
   source_plant_id:      string;
   source_plant_name:    string;

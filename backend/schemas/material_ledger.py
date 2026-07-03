@@ -24,24 +24,6 @@ class LedgerKpiSchema(BaseModel):
     unit:                  str
 
 
-class MovementRowSchema(BaseModel):
-    """One raw movement row — includes extra_fields for new CSV columns."""
-    plant_id:             str
-    material_id:          str
-    material_description: str
-    obj_type:             str
-    obj_type_label:       str
-    category:             str
-    category_label:       str
-    category_color:       str
-    movement_description: str
-    proc_cat_name:        Optional[str] = None
-    proc_cat_label:       str
-    quantity:             float
-    price:                Optional[float] = None
-    unit:                 str
-    extra_fields:         dict[str, Any] = {}   # any new CSV columns pass through here
-
 
 class StockTransferRow(BaseModel):
     """One inter-plant stock transfer parsed from VM VN rows."""

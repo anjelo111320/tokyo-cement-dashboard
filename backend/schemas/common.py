@@ -64,20 +64,4 @@ class ErrorResponse(BaseModel):
     meta: ApiMeta = Field(default_factory=ApiMeta)
 
 
-class Pagination(BaseModel):
-    """Pagination metadata for list endpoints."""
-    page: int             # Current page (1-indexed).
-    page_size: int        # Items per page.
-    total_items: int      # Total items across all pages.
-    total_pages: int      # ceil(total_items / page_size).
 
-
-class PaginatedResponse(BaseModel, Generic[T]):
-    """
-    Wraps a list response with pagination info.
-    Usage: PaginatedResponse[InventoryItemSchema](data=[...], pagination=...)
-    """
-    success: bool = True
-    data: list[T]
-    pagination: Pagination
-    meta: ApiMeta = Field(default_factory=ApiMeta)

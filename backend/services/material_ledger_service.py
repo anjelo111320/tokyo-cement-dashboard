@@ -28,8 +28,6 @@ from backend.repositories.csv.material_ledger_csv_repo import (
 )
 from backend.core.material_ledger_config import (
     CATEGORY_CONFIG,
-    OBJ_TYPE_CONFIG,
-    PROC_CAT_LABELS,
     QUANTITY_UNIT,
     CLOSING_CATEGORY,
     OPENING_CATEGORY,
@@ -37,7 +35,6 @@ from backend.core.material_ledger_config import (
     OUTFLOW_CATEGORIES,
 )
 from backend.schemas.material_ledger import (
-    MovementRowSchema,
     MaterialSchema,
     PlantSchema,
     LedgerKpiSchema,
@@ -485,52 +482,6 @@ class MaterialLedgerService:
             ))
 
         return StockTransferSchema(transfers=rows, unit=QUANTITY_UNIT)
-
-    # ── Movement Table ────────────────────────────────────────────────────────
-
-    def get_movements(
-        self,
-        plant_id: Optional[str] = None,
-        material_id: Optional[str] = None,
-        obj_type: Optional[str] = None,
-        category: Optional[str] = None,
-        page: int = 1,
-        page_size: int = 20,
-    ) -> tuple[list[MovementRowSchema], int]:
-        """
-        Returns a paginated list of raw movement rows for the detail table.
-        All category labels and obj_type labels come from config.
-        """
-        movements = self._ledger.get_movements(
-            plant_id=plant_id,
-            material_id=material_id,
-            obj_type=obj_type,
-            category=category,
-        )
-        total = len(movements)
-        start = (page - 1) * page_size
-        page_items = movements[start:start + page_size]
-
-        return [
-            MovementRowSchema(
-                plant_id=m.plant_id,
-                material_id=m.material_id,
-                material_description=m.material_description,
-                obj_type=m.obj_type,
-                obj_type_label=OBJ_TYPE_CONFIG.get(m.obj_type, m.obj_type),
-                category=m.category,
-                category_label=CATEGORY_CONFIG.get(m.category, {}).get("label", m.category),
-                category_color=CATEGORY_CONFIG.get(m.category, {}).get("color", "#9CA3AF"),
-                movement_description=m.movement_description,
-                proc_cat_name=m.proc_cat_name,
-                proc_cat_label=PROC_CAT_LABELS.get(m.proc_cat_name or "", m.proc_cat_name or "—"),
-                quantity=m.quantity,
-                price=m.price,
-                unit=QUANTITY_UNIT,
-                extra_fields=m.extra_fields,
-            )
-            for m in page_items
-        ], total
 
     # ── Reference data ────────────────────────────────────────────────────────
 

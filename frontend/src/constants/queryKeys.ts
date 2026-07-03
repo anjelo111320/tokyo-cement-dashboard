@@ -9,8 +9,6 @@ export const queryKeys = {
   ledger: {
     kpis:      (plantId?: string, materialId?: string) => ['ledger', 'kpis', plantId ?? 'all', materialId ?? 'all'] as const,
     transfers: (plantId?: string, materialId?: string) => ['ledger', 'transfers', plantId ?? 'all', materialId ?? 'all'] as const,
-    movements: (plantId?: string, materialId?: string, objType?: string, category?: string, page?: number) =>
-      ['ledger', 'movements', plantId ?? 'all', materialId ?? 'all', objType ?? 'all', category ?? 'all', page ?? 1] as const,
     materials: (plantIds?: string[]) => ['ledger', 'materials', plantIds?.join(',') ?? 'all'] as const,
     plants:    () => ['ledger', 'plants'] as const,
   },
