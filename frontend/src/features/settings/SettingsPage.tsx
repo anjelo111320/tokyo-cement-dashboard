@@ -492,20 +492,48 @@ function ThresholdsSection() {
         const isSaving   = groupSaving['__other__'] ?? false;
         return (
           <div className="rounded-xl border border-gray-200 overflow-hidden">
-            <button
-              onClick={() => toggleExpand('__other__')}
-              className="w-full flex items-center gap-3 px-4 py-3 text-left bg-gray-50 hover:bg-gray-100 transition-colors"
-            >
-              <span className="w-2.5 h-2.5 rounded-full bg-gray-400 shrink-0" />
-              <span className="text-sm font-semibold text-gray-700 flex-1">Other</span>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
-                {ungrouped.length} material{ungrouped.length !== 1 ? 's' : ''}
-              </span>
-              {isExpanded
-                ? <ChevronDown size={14} className="text-gray-400 shrink-0" />
-                : <ChevronRight size={14} className="text-gray-400 shrink-0" />
-              }
-            </button>
+            <div className="flex items-center gap-2 px-4 py-3 bg-gray-50">
+              <button
+                onClick={() => toggleExpand('__other__')}
+                className="flex items-center gap-2 flex-1 min-w-0 text-left"
+              >
+                <span className="w-2.5 h-2.5 rounded-full bg-gray-400 shrink-0" />
+                <span className="text-sm font-semibold text-gray-700 truncate">Other</span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 shrink-0">
+                  {ungrouped.length} material{ungrouped.length !== 1 ? 's' : ''}
+                </span>
+              </button>
+
+              {/* bulk MT input — admin only, applies to every ungrouped material at once */}
+              {isAdmin && (
+                <div className="flex items-center gap-1 shrink-0">
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.5"
+                    placeholder="MT"
+                    value={groupBulk['__other__'] ?? ''}
+                    onChange={e => setGroupBulk(s => ({ ...s, __other__: e.target.value }))}
+                    onKeyDown={e => { if (e.key === 'Enter') setAllForGroup('__other__', ungrouped); }}
+                    className="w-14 text-xs border border-gray-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary-400 text-center bg-white"
+                  />
+                  <button
+                    onClick={() => setAllForGroup('__other__', ungrouped)}
+                    disabled={!groupBulk['__other__'] || parseFloat(groupBulk['__other__'] ?? '') <= 0 || isSaving}
+                    className="px-2 py-1 text-[10px] font-bold rounded-lg bg-[#1B3550]/10 text-[#1B3550] hover:bg-[#1B3550]/20 disabled:opacity-30 transition-colors whitespace-nowrap"
+                  >
+                    Set all
+                  </button>
+                </div>
+              )}
+
+              <button onClick={() => toggleExpand('__other__')} className="shrink-0 text-gray-400 hover:text-gray-600">
+                {isExpanded
+                  ? <ChevronDown size={14} />
+                  : <ChevronRight size={14} />
+                }
+              </button>
+            </div>
 
             {isExpanded && (
               <div className="border-t border-gray-100 divide-y divide-gray-100">
