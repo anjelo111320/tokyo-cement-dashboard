@@ -269,6 +269,86 @@ def test_explicit_dismiss_clears_the_flag_without_other_changes(admin_client, as
     assert mats["SMOKE-MANUAL-1"]["is_new"] is False
 
 
+# ── Uploaded datasets (library + switcher) ─────────────────────────────────────
+# These tests run in order and walk one dataset through its full lifecycle:
+# upload → scopes every screen → switch to default → delete.
+
+_DATASET_CSV = (
+    "Plant,Valuation Class,Material,Material Description,Obj Type,Category,All Items,Proc Cat Name,Quantity,Price\n"
+    "2140,3100,80300000008,Insee Extra - Puttalam 50kg,CA,EB,Ending Balance,,55.5,\n"
+    "2140,3100,SMOKE-DS-NEW,Smoke Dataset Material,CA,EB,Ending Balance,,12.0,\n"
+)
+
+
+def test_dataset_upload_requires_admin(client):
+    res = _without_cookies(client, "post", "/api/v1/admin/datasets",
+                           files={"file": ("t.csv", _DATASET_CSV.encode(), "text/csv")})
+    assert res.status_code == 401
+
+
+def test_dataset_upload_rejects_missing_columns(admin_client):
+    bad = "Plant,Material\n2140,80300000008\n"
+    res = admin_client.post("/api/v1/admin/datasets",
+                            files={"file": ("bad.csv", bad.encode(), "text/csv")})
+    assert res.status_code == 400
+    assert "missing required column" in res.json()["detail"]
+
+
+def test_dataset_upload_activates_and_scopes_everything(admin_client):
+    res = admin_client.post("/api/v1/admin/datasets",
+                            files={"file": ("smoke-dataset.csv", _DATASET_CSV.encode(), "text/csv")})
+    assert res.status_code == 201, res.text
+    body = res.json()["data"]
+    assert body["is_active"] is True
+    assert body["row_count"] == 2
+
+    # Status reports the uploaded source
+    status = admin_client.get("/api/v1/status").json()["data"]["csv_files"]["material_ledger"]
+    assert status["source"] == "uploaded: smoke-dataset.csv"
+    assert status["rows_loaded"] == 2
+
+    # Dashboard-facing materials list is scoped to EXACTLY the dataset's IDs
+    ids = {m["material_id"] for m in admin_client.get("/api/v1/material-ledger/materials").json()["data"]}
+    assert ids == {"80300000008", "SMOKE-DS-NEW"}
+
+    # Never-seen ID was imported into the DB flagged as new (yellow highlight)
+    mats = {m["material_id"]: m for m in admin_client.get("/api/v1/admin/materials").json()["data"]}
+    assert mats["SMOKE-DS-NEW"]["is_new"] is True
+    assert mats["SMOKE-DS-NEW"]["in_dataset"] is True
+    assert mats["80300000008"]["in_dataset"] is True
+    # A material that exists in the DB but not in this dataset is greyed out
+    assert mats["SMOKE-MANUAL-1"]["in_dataset"] is False
+
+
+def test_dataset_switch_back_to_default(admin_client):
+    res = admin_client.post("/api/v1/admin/datasets/activate-default")
+    assert res.status_code == 200
+
+    status = admin_client.get("/api/v1/status").json()["data"]["csv_files"]["material_ledger"]
+    assert status["source"] == "bundled"
+    assert status["rows_loaded"] > 100  # full bundled dataset again
+
+    ids = {m["material_id"] for m in admin_client.get("/api/v1/material-ledger/materials").json()["data"]}
+    assert len(ids) > 2
+    listing = admin_client.get("/api/v1/admin/datasets").json()["data"]
+    assert listing["active_dataset_id"] is None
+    assert len(listing["datasets"]) == 1
+
+
+def test_dataset_delete_active_falls_back_to_default(admin_client):
+    listing = admin_client.get("/api/v1/admin/datasets").json()["data"]
+    ds_id = listing["datasets"][0]["id"]
+
+    # Re-activate the stored dataset, then delete it while active
+    assert admin_client.post(f"/api/v1/admin/datasets/{ds_id}/activate").status_code == 200
+    assert admin_client.get("/api/v1/status").json()["data"]["csv_files"]["material_ledger"]["source"].startswith("uploaded")
+
+    assert admin_client.delete(f"/api/v1/admin/datasets/{ds_id}").status_code == 200
+    status = admin_client.get("/api/v1/status").json()["data"]["csv_files"]["material_ledger"]
+    assert status["source"] == "bundled"
+    assert admin_client.get("/api/v1/admin/datasets").json()["data"]["datasets"] == []
+
+
 # ── CSV validation ────────────────────────────────────────────────────────────
 
 def test_csv_missing_columns_rejected(tmp_path):

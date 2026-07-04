@@ -72,6 +72,28 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.error("threshold_hydration_failed", error=str(exc))
 
     csv_cache.load_all()
+
+    # If an admin-uploaded dataset was active before this restart, re-pin it
+    # over the bundled file so the dashboard keeps showing the uploaded data.
+    # Best-effort: failure falls back to the bundled CSV already loaded above.
+    if settings.database_url:
+        try:
+            import io
+            import pandas as pd
+            from sqlalchemy import select as sa_select
+            from backend.db.database import get_db
+            from backend.db.models.csv_dataset import CsvDataset
+            async for db in get_db():
+                result = await db.execute(sa_select(CsvDataset).where(CsvDataset.is_active == True))  # noqa: E712
+                active = result.scalar_one_or_none()
+                if active:
+                    df = pd.read_csv(io.StringIO(active.content), low_memory=False)
+                    csv_cache.pin_dataframe("material_ledger", df, f"uploaded: {active.filename}")
+                    logger.info("dataset_rehydrated", filename=active.filename, rows=len(df))
+                break
+        except Exception as exc:
+            logger.error("dataset_rehydration_failed", error=str(exc))
+
     start_scheduler()
 
     yield

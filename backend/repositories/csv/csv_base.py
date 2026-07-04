@@ -93,16 +93,48 @@ class CsvCache:
         # Error messages from the last load attempt (empty string = no error).
         self._errors: dict[str, str] = {}
 
+        # Pinned keys are served from an admin-uploaded dataset (stored in the
+        # DB) instead of the disk file. load_all() skips pinned keys so the
+        # 15-minute scheduler reload can never clobber an uploaded dataset.
+        # Maps key -> human-readable source label (e.g. "uploaded: june-v2.csv").
+        self._pinned: dict[str, str] = {}
+
     def load_all(self) -> None:
         """
         Loads (or reloads) every CSV file listed in CSV_FILES.
         Called at startup and by the scheduler every 15 minutes.
-        Files that fail to load log an error but don't crash the server —
-        other files are still loaded successfully.
+        Pinned keys (admin-uploaded datasets) are skipped — their data lives
+        in the DB, not on disk. Files that fail to load log an error but
+        don't crash the server — other files are still loaded successfully.
         """
         base = Path(settings.csv_base_path)
         for key, filename in CSV_FILES.items():
+            with self._lock:
+                if key in self._pinned:
+                    continue
             self._load_file(key, base / filename)
+
+    def pin_dataframe(self, key: str, df: pd.DataFrame, source_label: str) -> None:
+        """Replace a key's data with an uploaded dataset and protect it from
+        disk reloads until unpin() is called."""
+        with self._lock:
+            self._frames[key] = df
+            self._pinned[key] = source_label
+            self._last_modified[key] = ""
+            self._last_processed[key] = datetime.utcnow().isoformat() + "Z"
+            self._errors.pop(key, None)
+        logger.info("csv_pinned", file=key, source=source_label, rows=len(df))
+
+    def unpin(self, key: str) -> None:
+        """Release a pinned key and immediately reload it from disk (back to
+        the bundled file)."""
+        with self._lock:
+            self._pinned.pop(key, None)
+        self._load_file(key, Path(settings.csv_base_path) / CSV_FILES[key])
+
+    def pinned_source(self, key: str) -> Optional[str]:
+        with self._lock:
+            return self._pinned.get(key)
 
     def _load_file(self, key: str, path: Path) -> None:
         """
@@ -139,6 +171,10 @@ class CsvCache:
             # Acquire the lock ONLY after the slow disk read is done,
             # keeping the locked section as short as possible.
             with self._lock:
+                if key in self._pinned:
+                    # An uploaded dataset was pinned while we were reading the
+                    # disk file (scheduler race) — the pin wins, discard this read.
+                    return
                 self._frames[key] = df
                 self._last_modified[key] = mtime
                 self._last_processed[key] = datetime.utcnow().isoformat() + "Z"
@@ -181,6 +217,7 @@ class CsvCache:
             rows = len(self._frames[key]) if key in self._frames else 0
             return {
                 "path": path,
+                "source": self._pinned.get(key, "bundled"),
                 "last_modified": self._last_modified.get(key, ""),
                 "last_processed": self._last_processed.get(key, ""),
                 "rows_loaded": rows,

@@ -1,14 +1,17 @@
+import io
 import re
+import uuid as uuid_mod
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.auth.dependencies import require_admin, get_current_user
 from backend.db.database import get_db
 from backend.db.models.user import User
 from backend.db.models.brand_group import BrandGroup
+from backend.db.models.csv_dataset import CsvDataset
 from backend.repositories.db import user_repo, plant_repo, settings_repo
 from backend.auth.password import hash_password
 
@@ -126,6 +129,18 @@ class MaterialUpdate(BaseModel):
     is_new: Optional[bool] = None  # lets the frontend "Dismiss" action clear the highlight
 
 
+def _dataset_material_ids() -> set[str]:
+    """Distinct material IDs present in the ACTIVE dataset (uploaded or bundled).
+    Drives the admin panel's not-in-dataset greying."""
+    from backend.repositories.csv.csv_base import csv_cache  # noqa: PLC0415
+    from backend.core.material_ledger_config import COLUMN_MAP  # noqa: PLC0415
+    df = csv_cache.get("material_ledger")
+    col = COLUMN_MAP.get("material_id", "Material")
+    if df.empty or col not in df.columns:
+        return set()
+    return set(df[col].astype(str).str.strip())
+
+
 @router.get("/materials")
 async def list_materials(db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
     result = await db.execute(select(Material).order_by(Material.material_id))
@@ -140,10 +155,12 @@ async def list_materials(db: AsyncSession = Depends(get_db), _: User = Depends(g
         m.description,
     ))
 
+    in_dataset = _dataset_material_ids()
+
     return {"success": True, "data": [
         {"material_id": m.material_id, "description": m.description,
          "brand_group": m.brand_group, "is_bag": m.is_bag, "is_bulk": m.is_bulk, "is_active": m.is_active,
-         "is_new": m.is_new}
+         "is_new": m.is_new, "in_dataset": m.material_id in in_dataset}
         for m in mats
     ]}
 
@@ -190,21 +207,20 @@ async def delete_material(material_id: str, db: AsyncSession = Depends(get_db), 
     return {"success": True}
 
 
-@router.post("/materials/sync")
-async def sync_materials(db: AsyncSession = Depends(get_db), _: User = Depends(require_admin)):
-    """Re-import distinct materials from the current in-memory CSV cache."""
-    from backend.repositories.csv.csv_base import csv_cache
-    from backend.core.material_ledger_config import COLUMN_MAP
-    from backend.services.material_ledger_service import _classify_brand, _material_is_bulk
+async def _import_new_materials_from_cache(db: AsyncSession) -> int:
+    """Insert DB rows for material IDs present in the active dataset but not
+    yet in the materials table, flagged is_new=True (yellow admin highlight).
+    Existing rows are never touched. Shared by the manual Sync button and
+    dataset upload/activation."""
+    from backend.repositories.csv.csv_base import csv_cache  # noqa: PLC0415
+    from backend.core.material_ledger_config import COLUMN_MAP  # noqa: PLC0415
+    from backend.services.material_ledger_service import _classify_brand, _material_is_bulk  # noqa: PLC0415
 
     df = csv_cache.get("material_ledger")
-    if df is None:
-        raise HTTPException(status_code=503, detail="CSV not loaded")
-
     mat_col = COLUMN_MAP.get("material_id", "Material")
     desc_col = COLUMN_MAP.get("material_description", "Material Description")
-    if mat_col not in df.columns or desc_col not in df.columns:
-        raise HTTPException(status_code=503, detail="CSV missing material columns")
+    if df.empty or mat_col not in df.columns or desc_col not in df.columns:
+        return 0
 
     pairs = df[[mat_col, desc_col]].drop_duplicates().dropna()
     count = 0
@@ -212,10 +228,7 @@ async def sync_materials(db: AsyncSession = Depends(get_db), _: User = Depends(r
         mat_id = str(row[mat_col]).strip()
         desc   = str(row[desc_col]).strip()
         result = await db.execute(select(Material).where(Material.material_id == mat_id))
-        existing = result.scalar_one_or_none()
-        if not existing:
-            # Manually triggered by an admin on an already-established system
-            # (never used for a cold/empty-table seed) — always flag as new.
+        if not result.scalar_one_or_none():
             db.add(Material(
                 material_id=mat_id,
                 description=desc,
@@ -226,6 +239,13 @@ async def sync_materials(db: AsyncSession = Depends(get_db), _: User = Depends(r
             ))
             count += 1
     await db.commit()
+    return count
+
+
+@router.post("/materials/sync")
+async def sync_materials(db: AsyncSession = Depends(get_db), _: User = Depends(require_admin)):
+    """Re-import distinct materials from the current in-memory CSV cache."""
+    count = await _import_new_materials_from_cache(db)
     return {"success": True, "data": {"imported": count}}
 
 
@@ -261,6 +281,146 @@ async def create_brand_group(body: BrandGroupCreate, db: AsyncSession = Depends(
     db.add(group)
     await db.commit()
     return {"success": True, "data": {"id": group.id, "label": group.label, "sort_order": group.sort_order}}
+
+
+# ── Datasets (admin-uploaded inventory CSVs) ─────────────────────────────────
+# Library model: uploaded CSVs are stored whole in the DB until deleted.
+# At most one is active; it is pinned into the CSV cache and drives every
+# dashboard screen. Zero active = the bundled (repo) CSV is in effect.
+
+_LEDGER_KEY = "material_ledger"
+_MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB — current exports are ~340 KB
+
+
+def _parse_and_validate_csv(raw: bytes, filename: str) -> "object":
+    """Parse uploaded bytes as CSV and enforce the same required-column rules
+    as disk loads. Returns the DataFrame or raises HTTPException(400)."""
+    import pandas as pd  # noqa: PLC0415
+    from backend.repositories.csv.csv_base import REQUIRED_COLUMNS  # noqa: PLC0415
+
+    try:
+        df = pd.read_csv(io.BytesIO(raw), low_memory=False)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Could not parse {filename} as CSV: {exc}")
+
+    required = REQUIRED_COLUMNS.get(_LEDGER_KEY, [])
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{filename} is missing required column(s): {', '.join(missing)}. "
+                   f"Found: {', '.join(map(str, df.columns[:15]))}",
+        )
+    if df.empty:
+        raise HTTPException(status_code=400, detail=f"{filename} contains no data rows")
+    return df
+
+
+async def _apply_active_dataset(db: AsyncSession, dataset: Optional[CsvDataset]) -> int:
+    """Make `dataset` the single active one (None = bundled default), update
+    the CSV cache accordingly, and import any never-seen material IDs into the
+    DB flagged is_new=True. Returns the number of newly imported materials."""
+    import pandas as pd  # noqa: PLC0415
+    from backend.repositories.csv.csv_base import csv_cache  # noqa: PLC0415
+
+    await db.execute(sa_update(CsvDataset).values(is_active=False))
+    if dataset is None:
+        await db.commit()
+        csv_cache.unpin(_LEDGER_KEY)
+    else:
+        dataset.is_active = True
+        await db.commit()
+        df = pd.read_csv(io.StringIO(dataset.content), low_memory=False)
+        csv_cache.pin_dataframe(_LEDGER_KEY, df, f"uploaded: {dataset.filename}")
+
+    return await _import_new_materials_from_cache(db)
+
+
+def _dataset_out(d: CsvDataset) -> dict:
+    return {
+        "id": str(d.id), "filename": d.filename, "row_count": d.row_count,
+        "is_active": d.is_active, "uploaded_at": d.uploaded_at.isoformat(),
+    }
+
+
+@router.get("/datasets")
+async def list_datasets(db: AsyncSession = Depends(get_db), _: User = Depends(require_admin)):
+    result = await db.execute(select(CsvDataset).order_by(CsvDataset.uploaded_at.desc()))
+    datasets = result.scalars().all()
+    active = next((str(d.id) for d in datasets if d.is_active), None)
+    return {"success": True, "data": {
+        "datasets": [_dataset_out(d) for d in datasets],
+        "active_dataset_id": active,  # null = bundled default is active
+    }}
+
+
+@router.post("/datasets", status_code=status.HTTP_201_CREATED)
+async def upload_dataset(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    """Upload an inventory CSV. Validated, stored in the DB, and activated
+    immediately — the whole dashboard switches to it."""
+    raw = await file.read()
+    if len(raw) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=400, detail="File too large (max 10 MB)")
+    filename = file.filename or "upload.csv"
+
+    df = _parse_and_validate_csv(raw, filename)
+
+    dataset = CsvDataset(
+        filename=filename,
+        content=raw.decode("utf-8-sig", errors="replace"),
+        row_count=len(df),
+        uploaded_by=user.id,
+    )
+    db.add(dataset)
+    await db.flush()
+
+    imported = await _apply_active_dataset(db, dataset)
+    return {"success": True, "data": {**_dataset_out(dataset), "new_materials_imported": imported}}
+
+
+@router.post("/datasets/activate-default")
+async def activate_default_dataset(db: AsyncSession = Depends(get_db), _: User = Depends(require_admin)):
+    """Switch the dashboard back to the bundled (repo) CSV without deleting
+    any stored dataset."""
+    imported = await _apply_active_dataset(db, None)
+    return {"success": True, "data": {"new_materials_imported": imported}}
+
+
+@router.post("/datasets/{dataset_id}/activate")
+async def activate_dataset(dataset_id: str, db: AsyncSession = Depends(get_db), _: User = Depends(require_admin)):
+    try:
+        did = uuid_mod.UUID(dataset_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid dataset id")
+    dataset = await db.get(CsvDataset, did)
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    imported = await _apply_active_dataset(db, dataset)
+    return {"success": True, "data": {"new_materials_imported": imported}}
+
+
+@router.delete("/datasets/{dataset_id}")
+async def delete_dataset(dataset_id: str, db: AsyncSession = Depends(get_db), _: User = Depends(require_admin)):
+    """Delete a stored dataset. If it was active, the dashboard falls back to
+    the bundled default CSV."""
+    try:
+        did = uuid_mod.UUID(dataset_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid dataset id")
+    dataset = await db.get(CsvDataset, did)
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    was_active = dataset.is_active
+    await db.delete(dataset)
+    await db.commit()
+    if was_active:
+        await _apply_active_dataset(db, None)
+    return {"success": True}
 
 
 # ── Users ─────────────────────────────────────────────────────────────────────

@@ -19,6 +19,24 @@ export interface AdminMaterial {
   is_bulk: boolean;
   is_active: boolean;
   is_new: boolean;
+  /** Present in the ACTIVE dataset (uploaded or bundled CSV). Rows with
+   * false are greyed out in the Materials tab — the material exists in the
+   * DB but the current dataset has no data for it. */
+  in_dataset: boolean;
+}
+
+export interface AdminDataset {
+  id: string;
+  filename: string;
+  row_count: number;
+  is_active: boolean;
+  uploaded_at: string;
+}
+
+export interface DatasetListResponse {
+  datasets: AdminDataset[];
+  /** null = the bundled default CSV is active */
+  active_dataset_id: string | null;
 }
 
 export interface AdminBrandGroup {
@@ -60,6 +78,17 @@ export const adminService = {
   updateMaterial:  (id: string, body: Partial<AdminMaterial>) => apiClient.put(`/admin/materials/${id}`, body),
   deleteMaterial:  (id: string) => apiClient.delete(`/admin/materials/${id}`),
   syncMaterials:   () => apiClient.post('/admin/materials/sync'),
+
+  // Datasets (uploaded inventory CSVs)
+  getDatasets: () => apiClient.get<{ data: { data: DatasetListResponse } }>('/admin/datasets').then(wrap<DatasetListResponse>),
+  uploadDataset: (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return apiClient.post('/admin/datasets', form, { headers: { 'Content-Type': 'multipart/form-data' } });
+  },
+  activateDataset: (id: string) => apiClient.post(`/admin/datasets/${id}/activate`),
+  activateDefaultDataset: () => apiClient.post('/admin/datasets/activate-default'),
+  deleteDataset: (id: string) => apiClient.delete(`/admin/datasets/${id}`),
 
   // Brand groups
   getBrandGroups:   () => apiClient.get<{ data: { data: AdminBrandGroup[] } }>('/admin/brand-groups').then(wrap<AdminBrandGroup[]>),

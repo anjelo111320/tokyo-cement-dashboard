@@ -37,8 +37,10 @@ apiClient.interceptors.response.use(
           return Promise.reject(error);
         }
       }
-      const message = (error.response?.data as { error?: { message?: string } } | undefined)
-        ?.error?.message ?? error.message;
+      // Surface the most specific message the backend gave us:
+      // AppError envelope → FastAPI HTTPException detail → axios default.
+      const data = error.response?.data as { error?: { message?: string }; detail?: string } | undefined;
+      const message = data?.error?.message ?? data?.detail ?? error.message;
       return Promise.reject(new Error(message));
     }
     return Promise.reject(error);

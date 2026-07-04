@@ -1,14 +1,15 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { adminService, type AdminPlant, type AdminMaterial, type AdminBrandGroup, type SharePointConfig } from '@/services/admin.service';
 import { cn } from '@/utils/cn';
-import { Trash2, Plus, X, RotateCcw, Check } from 'lucide-react';
+import { Trash2, Plus, X, RotateCcw, Check, Upload, Database } from 'lucide-react';
 
-type Tab = 'plants' | 'materials' | 'sharepoint' | 'users';
+type Tab = 'plants' | 'materials' | 'datasets' | 'sharepoint' | 'users';
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'plants',     label: 'Plants'      },
   { key: 'materials',  label: 'Materials'   },
+  { key: 'datasets',   label: 'Datasets'    },
   { key: 'sharepoint', label: 'SharePoint'  },
   { key: 'users',      label: 'Users'       },
 ];
@@ -219,7 +220,7 @@ function PlantsTab() {
 
 // ── Materials tab ──────────────────────────────────────────────────────────────
 
-const BLANK_MAT: AdminMaterial = { material_id: '', description: '', brand_group: null, is_bag: true, is_bulk: false, is_active: true, is_new: false };
+const BLANK_MAT: AdminMaterial = { material_id: '', description: '', brand_group: null, is_bag: true, is_bulk: false, is_active: true, is_new: false, in_dataset: true };
 
 /** Brand group dropdown, fed by the admin-managed brand_groups table. Includes
  * an inline "add new group" flow so a new group is usable immediately —
@@ -397,13 +398,19 @@ function MaterialsTab() {
               return (
                 <tr key={m.material_id} className={cn(
                   'transition-colors',
-                  hidden ? 'bg-gray-50 opacity-60' : m.is_new ? 'bg-yellow-50 hover:bg-yellow-100' : 'hover:bg-gray-50',
+                  hidden ? 'bg-gray-50 opacity-60'
+                  : m.is_new ? 'bg-yellow-50 hover:bg-yellow-100'
+                  : !m.in_dataset ? 'bg-gray-50/70 opacity-50 hover:opacity-80'
+                  : 'hover:bg-gray-50',
                 )}>
                   <td className="px-3 py-2 font-mono text-gray-500">
                     {m.material_id}
                     {hidden && <span className="ml-1.5 text-[9px] font-bold px-1 py-0.5 bg-gray-200 text-gray-500 rounded">HIDDEN</span>}
                     {!hidden && m.is_new && (
                       <span className="ml-1.5 text-[9px] font-bold px-1 py-0.5 bg-yellow-200 text-yellow-800 rounded" title="Discovered from CSV — not yet reviewed">NEW</span>
+                    )}
+                    {!hidden && !m.is_new && !m.in_dataset && (
+                      <span className="ml-1.5 text-[9px] font-bold px-1 py-0.5 bg-gray-100 text-gray-400 rounded" title="This material has no data in the currently active dataset — it is not shown on any dashboard screen">NOT IN DATASET</span>
                     )}
                   </td>
                   <td className="px-3 py-2">
@@ -477,6 +484,154 @@ function MaterialsTab() {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// ── Datasets tab ───────────────────────────────────────────────────────────────
+// Library of admin-uploaded inventory CSVs, stored in the DB until deleted.
+// Exactly one dataset (or the bundled default) is active and drives every
+// dashboard screen. Switching invalidates the entire query cache since all
+// inventory numbers change.
+
+function DatasetsTab() {
+  const qc = useQueryClient();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+
+  const { data, isLoading } = useQuery({ queryKey: ['admin', 'datasets'], queryFn: adminService.getDatasets });
+  const datasets = data?.datasets ?? [];
+  const defaultActive = data?.active_dataset_id == null;
+
+  // Every mutation changes what the whole dashboard shows → flush everything.
+  const afterSwitch = (msg: string) => {
+    setError('');
+    setNotice(msg);
+    qc.invalidateQueries();
+  };
+  const fail = (e: Error) => { setNotice(''); setError(e.message); };
+
+  const uploadMut = useMutation({
+    mutationFn: (file: File) => adminService.uploadDataset(file),
+    onSuccess: () => { afterSwitch('Dataset uploaded and activated — all screens now use it.'); if (fileRef.current) fileRef.current.value = ''; },
+    onError: fail,
+  });
+  const activateMut = useMutation({
+    mutationFn: (id: string) => adminService.activateDataset(id),
+    onSuccess: () => afterSwitch('Dataset activated.'),
+    onError: fail,
+  });
+  const defaultMut = useMutation({
+    mutationFn: adminService.activateDefaultDataset,
+    onSuccess: () => afterSwitch('Switched back to the bundled default dataset.'),
+    onError: fail,
+  });
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => adminService.deleteDataset(id),
+    onSuccess: () => afterSwitch('Dataset deleted.'),
+    onError: fail,
+  });
+
+  const busy = uploadMut.isPending || activateMut.isPending || defaultMut.isPending || deleteMut.isPending;
+
+  if (isLoading) return <p className="text-sm text-gray-400 py-8 text-center">Loading…</p>;
+
+  return (
+    <div className="max-w-2xl space-y-4">
+      <p className="text-xs text-gray-500">
+        Upload an inventory CSV to test the dashboard with a different dataset. Uploaded files are
+        stored in the database until you delete them. The active dataset drives <strong>every</strong> screen —
+        materials and plants are matched by ID, and names always come from the database.
+        Required columns: Plant, Material, Material Description, Obj Type, Category, Quantity.
+      </p>
+
+      {/* ── Upload ── */}
+      <div className="bg-gray-50 rounded-xl border border-gray-200 p-4 space-y-3">
+        <p className="text-xs font-semibold text-gray-700 flex items-center gap-1.5"><Upload size={13} /> Upload new dataset</p>
+        <div className="flex items-center gap-2">
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".csv,text/csv"
+            className="text-xs file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-[#1D4E6B] file:text-white file:text-xs file:font-semibold hover:file:bg-[#163a52] file:cursor-pointer"
+          />
+          <button
+            onClick={() => { const f = fileRef.current?.files?.[0]; if (f) uploadMut.mutate(f); }}
+            disabled={busy}
+            className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-[#1D4E6B] text-white hover:bg-[#163a52] disabled:opacity-40 transition-colors whitespace-nowrap"
+          >
+            {uploadMut.isPending ? 'Uploading…' : 'Upload & activate'}
+          </button>
+        </div>
+      </div>
+
+      {error  && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
+      {notice && <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">{notice}</p>}
+
+      {/* ── Default (bundled) entry ── */}
+      <div className={cn(
+        'flex items-center justify-between px-4 py-3 rounded-xl border',
+        defaultActive ? 'border-[#1B3550] bg-[#0D1F2D]/5 ring-1 ring-[#1B3550]/20' : 'border-gray-200 bg-white',
+      )}>
+        <div className="flex items-center gap-2.5 min-w-0">
+          <Database size={15} className="text-gray-400 shrink-0" />
+          <div className="min-w-0">
+            <p className="text-xs font-semibold text-gray-900">Default (bundled)</p>
+            <p className="text-[10px] text-gray-400">Ships with the app — always available</p>
+          </div>
+        </div>
+        {defaultActive ? (
+          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-green-100 text-green-700 shrink-0">ACTIVE</span>
+        ) : (
+          <button onClick={() => defaultMut.mutate()} disabled={busy}
+            className="px-3 py-1 text-xs font-semibold rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-40 transition-colors shrink-0">
+            {defaultMut.isPending ? 'Switching…' : 'Switch to this'}
+          </button>
+        )}
+      </div>
+
+      {/* ── Uploaded datasets ── */}
+      {datasets.length === 0 ? (
+        <p className="text-xs text-gray-400 px-1">No uploaded datasets yet.</p>
+      ) : (
+        <div className="divide-y divide-gray-100 rounded-xl border border-gray-200 overflow-hidden">
+          {datasets.map(d => (
+            <div key={d.id} className={cn(
+              'flex items-center justify-between px-4 py-3',
+              d.is_active ? 'bg-[#0D1F2D]/5' : 'bg-white hover:bg-gray-50',
+            )}>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-gray-900 truncate">{d.filename}</p>
+                <p className="text-[10px] text-gray-400">
+                  {d.row_count.toLocaleString()} rows · uploaded {new Date(d.uploaded_at).toLocaleString()}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0 ml-3">
+                {d.is_active ? (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-green-100 text-green-700">ACTIVE</span>
+                ) : (
+                  <button onClick={() => activateMut.mutate(d.id)} disabled={busy}
+                    className="px-3 py-1 text-xs font-semibold rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-40 transition-colors">
+                    {activateMut.isPending ? 'Switching…' : 'Switch to this'}
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    if (window.confirm(`Delete dataset "${d.filename}"?${d.is_active ? '\nIt is currently ACTIVE — the dashboard will fall back to the bundled default.' : ''}`))
+                      deleteMut.mutate(d.id);
+                  }}
+                  disabled={busy}
+                  className="text-gray-300 hover:text-red-500 disabled:opacity-40 transition-colors"
+                  title="Delete dataset"
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -626,6 +781,7 @@ export function AdminPage() {
       {/* Tab content */}
       {tab === 'plants'     && <PlantsTab />}
       {tab === 'materials'  && <MaterialsTab />}
+      {tab === 'datasets'   && <DatasetsTab />}
       {tab === 'sharepoint' && <SharePointTab />}
       {tab === 'users'      && <UsersTab />}
     </div>

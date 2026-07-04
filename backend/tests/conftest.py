@@ -22,6 +22,7 @@ import backend.db.models.user        # noqa: F401
 import backend.db.models.plant       # noqa: F401
 import backend.db.models.material    # noqa: F401
 import backend.db.models.brand_group # noqa: F401
+import backend.db.models.csv_dataset # noqa: F401
 import backend.db.models.material_threshold  # noqa: F401
 import backend.db.models.sharepoint_config   # noqa: F401
 from backend.db.database import get_db
