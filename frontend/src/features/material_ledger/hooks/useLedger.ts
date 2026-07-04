@@ -73,3 +73,11 @@ export function useLocationSummary(includeBags = true, includeBulk = false) {
     staleTime: 5 * 60_000,
   });
 }
+
+export function useBrandGroups() {
+  return useQuery({
+    queryKey: queryKeys.ledger.brandGroups(),
+    queryFn: () => materialLedgerService.getBrandGroups(),
+    staleTime: 5 * 60_000,
+  });
+}

@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Settings, Database, RefreshCw, CheckCircle2, AlertCircle, Bell, Scale, Check, SlidersHorizontal, ChevronRight, ChevronDown, Lock } from 'lucide-react';
-import type { LedgerMaterial } from '@/types/material_ledger.types';
+import type { LedgerMaterial, BrandGroupOption } from '@/types/material_ledger.types';
 import { PageHeader } from '@/components/common/PageHeader';
 import { settingsService } from '@/services/settings.service';
 import { materialLedgerService } from '@/services/material_ledger.service';
+import { useBrandGroups } from '@/features/material_ledger/hooks/useLedger';
 import { queryKeys } from '@/constants/queryKeys';
 import { Skeleton } from '@/components/common/LoadingSkeleton';
 import { formatNumber } from '@/utils/formatters';
@@ -159,49 +160,41 @@ function UnitScaleSection() {
 }
 
 // ── Group definitions ─────────────────────────────────────────────────────────
+// Groups are the admin-managed brand groups (Settings → Materials tab), not a
+// hardcoded list — renaming/regrouping a material there is reflected here
+// immediately. Colors are cosmetic and assigned cyclically by position.
 
-interface MatGroup {
+interface DisplayGroup {
   id:     string;
   name:   string;
-  match:  (desc: string) => boolean;
+  mats:   LedgerMaterial[];
   border: string;
   bg:     string;
   dot:    string;
   badge:  string;
 }
 
-const MATERIAL_GROUPS: MatGroup[] = [
-  {
-    id: 'sanstha', name: 'Sanstha',
-    match:  d => d.toLowerCase().includes('sanstha'),
-    border: 'border-blue-200',   bg: 'bg-blue-50',
-    dot:    'bg-blue-500',       badge: 'bg-blue-100 text-blue-700',
-  },
-  {
-    id: 'sccl', name: 'SCCL',
-    match:  d => d.toLowerCase().includes('sccl'),
-    border: 'border-indigo-200', bg: 'bg-indigo-50',
-    dot:    'bg-indigo-500',     badge: 'bg-indigo-100 text-indigo-700',
-  },
-  {
-    id: 'mmc', name: 'MMC',
-    match:  d => d.toLowerCase().includes('mmc'),
-    border: 'border-violet-200', bg: 'bg-violet-50',
-    dot:    'bg-violet-500',     badge: 'bg-violet-100 text-violet-700',
-  },
-  {
-    id: 'marine', name: 'Marine',
-    match:  d => d.toLowerCase().includes('marine'),
-    border: 'border-cyan-200',   bg: 'bg-cyan-50',
-    dot:    'bg-cyan-500',       badge: 'bg-cyan-100 text-cyan-700',
-  },
-  {
-    id: 'mahamera', name: 'Mahamera',
-    match:  d => d.toLowerCase().includes('mahamera'),
-    border: 'border-teal-200',   bg: 'bg-teal-50',
-    dot:    'bg-teal-500',       badge: 'bg-teal-100 text-teal-700',
-  },
+const GROUP_PALETTE = [
+  { border: 'border-blue-200',   bg: 'bg-blue-50',   dot: 'bg-blue-500',   badge: 'bg-blue-100 text-blue-700' },
+  { border: 'border-indigo-200', bg: 'bg-indigo-50', dot: 'bg-indigo-500', badge: 'bg-indigo-100 text-indigo-700' },
+  { border: 'border-violet-200', bg: 'bg-violet-50', dot: 'bg-violet-500', badge: 'bg-violet-100 text-violet-700' },
+  { border: 'border-cyan-200',   bg: 'bg-cyan-50',   dot: 'bg-cyan-500',   badge: 'bg-cyan-100 text-cyan-700' },
+  { border: 'border-teal-200',   bg: 'bg-teal-50',   dot: 'bg-teal-500',   badge: 'bg-teal-100 text-teal-700' },
+  { border: 'border-amber-200',  bg: 'bg-amber-50',  dot: 'bg-amber-500',  badge: 'bg-amber-100 text-amber-700' },
+  { border: 'border-rose-200',   bg: 'bg-rose-50',   dot: 'bg-rose-500',   badge: 'bg-rose-100 text-rose-700' },
+  { border: 'border-lime-200',   bg: 'bg-lime-50',   dot: 'bg-lime-500',   badge: 'bg-lime-100 text-lime-700' },
 ];
+
+function buildDisplayGroups(materials: LedgerMaterial[], options: BrandGroupOption[]): DisplayGroup[] {
+  return options
+    .map((g, i) => ({
+      id: g.id,
+      name: g.label,
+      mats: materials.filter(m => m.brand_group === g.id),
+      ...GROUP_PALETTE[i % GROUP_PALETTE.length],
+    }))
+    .filter(g => g.mats.length > 0);
+}
 
 function GroupToggle({ enabled, onChange, disabled }: { enabled: boolean; onChange: () => void; disabled?: boolean }) {
   return (
@@ -241,6 +234,8 @@ function ThresholdsSection() {
     staleTime: 30 * 60_000,
   });
 
+  const { data: brandGroupOptions = [] } = useBrandGroups();
+
   const [expanded,     setExpanded]     = useState<Set<string>>(new Set());
   const [groupEnabled, setGroupEnabled] = useState<Record<string, boolean>>({});
   const [inputs,       setInputs]       = useState<Record<string, string>>({});
@@ -263,20 +258,22 @@ function ThresholdsSection() {
     });
   }, [thresholds]);
 
+  const displayGroups = buildDisplayGroups(materials, brandGroupOptions);
+
   // Sync group toggles from DB whenever thresholds or materials load/change.
   // Groups the user has manually toggled this session are left untouched.
   useEffect(() => {
     if (!materials.length) return;
     setGroupEnabled(prev => {
       const next = { ...prev };
-      for (const g of MATERIAL_GROUPS) {
+      for (const g of displayGroups) {
         if (userToggledRef.current.has(g.id)) continue;
-        const mats = materials.filter(m => g.match(m.material_description));
-        next[g.id] = mats.some(m => thresholds.some(t => t.material_id === m.material_id && t.min_stock_mt > 0));
+        next[g.id] = g.mats.some(m => thresholds.some(t => t.material_id === m.material_id && t.min_stock_mt > 0));
       }
       return next;
     });
-  }, [materials.length, thresholds.length]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [materials.length, thresholds.length, brandGroupOptions.length]);
 
   function toggleExpand(id: string) {
     setExpanded(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -331,7 +328,7 @@ function ThresholdsSection() {
 
   if (thLoading) return <Skeleton className="h-40 w-full rounded-lg" />;
 
-  const ungrouped = materials.filter(m => !MATERIAL_GROUPS.some(g => g.match(m.material_description)));
+  const ungrouped = materials.filter(m => !m.brand_group);
 
   return (
     <div className="space-y-3">
@@ -348,9 +345,8 @@ function ThresholdsSection() {
         Toggle a group OFF to remove all its alerts.
       </p>
 
-      {MATERIAL_GROUPS.map(group => {
-        const groupMats  = materials.filter(m => group.match(m.material_description));
-        if (!groupMats.length) return null;
+      {displayGroups.map(group => {
+        const groupMats  = group.mats;
 
         const isExpanded = expanded.has(group.id);
         const isEnabled  = groupEnabled[group.id] !== false;

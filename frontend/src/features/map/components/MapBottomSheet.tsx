@@ -22,7 +22,7 @@ export type SelectedMapItem = { type: 'plant'; data: LedgerPlant };
 
 // ── Plant detail content ──────────────────────────────────────────────────────
 function PlantContent({ plant }: { plant: LedgerPlant }) {
-  const { Icon, iconColor, iconBg, typeLabel } = getPlantTypeInfo(plant.plant_id);
+  const { Icon, iconColor, iconBg, typeLabel } = getPlantTypeInfo(plant.plant_type);
   const { data: kpis, isLoading: kpisLoading } = useLedgerKpis(plant.plant_id);
 
   return (

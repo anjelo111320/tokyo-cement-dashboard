@@ -15,10 +15,7 @@ import { StockAlertBubbles } from './components/StockAlertBubbles';
 import { PlantTransferActivity } from './components/PlantTransferActivity';
 import { Skeleton } from '@/components/common/LoadingSkeleton';
 import { cn } from '@/utils/cn';
-import {
-  getPlantIcon,
-  FACTORY_PLANT_IDS, TERMINAL_PLANT_IDS, HQ_PLANT_IDS,
-} from './components/mapIcons';
+import { getPlantIcon } from './components/mapIcons';
 import type { LedgerPlant } from '@/types/material_ledger.types';
 
 // ── Filter types ──────────────────────────────────────────────────────────────
@@ -44,10 +41,8 @@ const DEFAULT_FILTERS: MapFilters = {
   selectedPlantIds: null,
 };
 
-function getPlantTypeKey(plantId: string): PlantTypeKey {
-  if (FACTORY_PLANT_IDS.has(plantId))  return 'factory';
-  if (TERMINAL_PLANT_IDS.has(plantId)) return 'terminal';
-  if (HQ_PLANT_IDS.has(plantId))       return 'hq';
+function getPlantTypeKey(plantType: string): PlantTypeKey {
+  if (plantType === 'factory' || plantType === 'terminal' || plantType === 'hq') return plantType;
   return 'depot';
 }
 
@@ -64,7 +59,7 @@ function applyMapFilters(
 ): LedgerPlant[] {
   const selectedSet = filters.selectedPlantIds ? new Set(filters.selectedPlantIds) : null;
   return plants.filter(p => {
-    if (!filters.types[getPlantTypeKey(p.plant_id)])              return false;
+    if (!filters.types[getPlantTypeKey(p.plant_type)])            return false;
     if (filters.dataStatus === 'with_data' && !p.has_ledger_data) return false;
     if (filters.dataStatus === 'no_data'   &&  p.has_ledger_data) return false;
     if (filters.inTransitOnly && !transitIds.has(p.plant_id))     return false;
@@ -117,8 +112,8 @@ function MapSizer() {
   return null;
 }
 
-function TypeIcon({ plantId, size = 14 }: { plantId: string; size?: number }) {
-  const { Icon, iconColor } = getPlantTypeInfo(plantId);
+function TypeIcon({ plantType, size = 14 }: { plantType: string; size?: number }) {
+  const { Icon, iconColor } = getPlantTypeInfo(plantType);
   return <Icon size={size} style={{ color: iconColor }} aria-hidden="true" />;
 }
 
@@ -130,10 +125,11 @@ function PlantList({ plants, selectedId, onSelect, onFly }: {
   onFly: (lat: number, lng: number) => void;
 }) {
   const groups = [
-    { label: 'Factories', filter: (p: LedgerPlant) => FACTORY_PLANT_IDS.has(p.plant_id) },
-    { label: 'Depots',    filter: (p: LedgerPlant) => !FACTORY_PLANT_IDS.has(p.plant_id) && !TERMINAL_PLANT_IDS.has(p.plant_id) && !HQ_PLANT_IDS.has(p.plant_id) },
-    { label: 'Terminals', filter: (p: LedgerPlant) => TERMINAL_PLANT_IDS.has(p.plant_id) },
-    { label: 'HQ / Admin', filter: (p: LedgerPlant) => HQ_PLANT_IDS.has(p.plant_id) },
+    { label: 'Factories', filter: (p: LedgerPlant) => p.plant_type === 'factory' },
+    { label: 'Terminals', filter: (p: LedgerPlant) => p.plant_type === 'terminal' },
+    { label: 'HQ / Admin', filter: (p: LedgerPlant) => p.plant_type === 'hq' },
+    // Catch-all: depot plus any unexpected/legacy plant_type value.
+    { label: 'Depots',    filter: (p: LedgerPlant) => p.plant_type !== 'factory' && p.plant_type !== 'terminal' && p.plant_type !== 'hq' },
   ];
 
   return (
@@ -160,7 +156,7 @@ function PlantList({ plants, selectedId, onSelect, onFly }: {
                   )}
                 >
                   <div className="flex items-center gap-2.5">
-                    <TypeIcon plantId={p.plant_id} size={15} />
+                    <TypeIcon plantType={p.plant_type} size={15} />
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-semibold text-gray-900 truncate">{p.name}</p>
                       <p className="text-[10px] text-gray-400">{p.city ?? '—'} · {p.plant_id}</p>
@@ -181,7 +177,7 @@ function PlantList({ plants, selectedId, onSelect, onFly }: {
 
 // ── Desktop plant detail panel ────────────────────────────────────────────────
 function DesktopPlantDetail({ plant, onBack }: { plant: LedgerPlant; onBack: () => void }) {
-  const { Icon, iconColor, iconBg, typeLabel } = getPlantTypeInfo(plant.plant_id);
+  const { Icon, iconColor, iconBg, typeLabel } = getPlantTypeInfo(plant.plant_type);
   const { data: kpis, isLoading: kpisLoading } = useLedgerKpis(plant.plant_id);
 
   return (
@@ -343,14 +339,14 @@ function MapCanvas({ plants, tileLayer, flyTarget, selectedId, onSelectPlant, is
         <Marker
           key={plant.plant_id}
           position={[plant.latitude!, plant.longitude!]}
-          icon={getPlantIcon(plant.plant_id)}
+          icon={getPlantIcon(plant.plant_id, plant.plant_type)}
           eventHandlers={{ click: () => onSelectPlant(plant) }}
         >
           {/* Highlight ring for selected plant */}
           {selectedId === plant.plant_id && (
             <Circle
               center={[plant.latitude!, plant.longitude!]}
-              radius={FACTORY_PLANT_IDS.has(plant.plant_id) ? 6000 : 3000}
+              radius={plant.plant_type === 'factory' ? 6000 : 3000}
               pathOptions={{ color: '#1D4E6B', fillColor: '#1D4E6B', fillOpacity: 0.06, weight: 2 }}
             />
           )}
@@ -413,7 +409,7 @@ export function MapPage() {
   // Per-type counts (of all plants, not just visible) for the filter panel labels
   const typeCounts = useMemo(() => {
     const c = { factory: 0, terminal: 0, hq: 0, depot: 0 };
-    for (const p of plants) c[getPlantTypeKey(p.plant_id)]++;
+    for (const p of plants) c[getPlantTypeKey(p.plant_type)]++;
     return c;
   }, [plants]);
 
@@ -442,8 +438,8 @@ export function MapPage() {
   const btnActive = 'bg-[#1D4E6B] text-white border-[#2E6B8A] scale-95 hover:bg-[#1B3550] hover:text-white';
 
   // Stats
-  const factoryCount  = plants.filter((p) => FACTORY_PLANT_IDS.has(p.plant_id)).length;
-  const depotCount    = plants.filter((p) => !FACTORY_PLANT_IDS.has(p.plant_id) && !TERMINAL_PLANT_IDS.has(p.plant_id) && !HQ_PLANT_IDS.has(p.plant_id)).length;
+  const factoryCount  = plants.filter((p) => p.plant_type === 'factory').length;
+  const depotCount    = plants.filter((p) => p.plant_type !== 'factory' && p.plant_type !== 'terminal' && p.plant_type !== 'hq').length;
   const withDataCount = plants.filter((p) => p.has_ledger_data).length;
 
   // Search filter (applied to sidebar list + map search dropdown — separate from map filters)
@@ -681,7 +677,7 @@ export function MapPage() {
             <div className="max-h-44 overflow-y-auto space-y-0.5 pr-0.5">
               {plantPickerList.map(p => {
                 const checked = isPlantChecked(p.plant_id);
-                const { iconColor } = getPlantTypeInfo(p.plant_id);
+                const { iconColor } = getPlantTypeInfo(p.plant_type);
                 return (
                   <label key={p.plant_id} className={cn(
                     'flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors',
@@ -947,7 +943,7 @@ export function MapPage() {
                           isDarkMap ? 'hover:bg-gray-800/60' : 'hover:bg-gray-50',
                         )}
                       >
-                        <TypeIcon plantId={p.plant_id} size={13} />
+                        <TypeIcon plantType={p.plant_type} size={13} />
                         <div className="min-w-0 flex-1">
                           <p className={cn('text-xs font-semibold truncate', isDarkMap ? 'text-gray-200' : 'text-gray-800')}>
                             {p.name}

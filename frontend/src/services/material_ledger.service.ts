@@ -2,7 +2,7 @@ import type { ApiResponse } from '@/types/common.types';
 import type {
   LedgerKpi, LedgerMaterial, LedgerPlant, StockTransfer,
   InventorySummary, InventoryAlerts, MaterialThreshold, InventoryReport,
-  LocationSummary,
+  LocationSummary, BrandGroupOption,
 } from '@/types/material_ledger.types';
 import { apiClient } from './api.client';
 
@@ -84,6 +84,11 @@ export const materialLedgerService = {
     const res = await apiClient.get<ApiResponse<LocationSummary>>('/material-ledger/location-summary', {
       params: { include_bags: includeBags, include_bulk: includeBulk },
     });
+    return res.data.data;
+  },
+
+  async getBrandGroups(): Promise<BrandGroupOption[]> {
+    const res = await apiClient.get<ApiResponse<BrandGroupOption[]>>('/material-ledger/brand-groups');
     return res.data.data;
   },
 };

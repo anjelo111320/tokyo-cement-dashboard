@@ -65,6 +65,7 @@ export interface InventoryReport {
 export interface LedgerMaterial {
   material_id:          string;
   material_description: string;
+  brand_group:          string | null;
   closing_stock_mt:     number;
   ever_stocked:         boolean;
 }
@@ -77,9 +78,17 @@ export interface LedgerPlant {
   country:         string | null;
   postal_code:     string | null;
   customer_number: string | null;
+  plant_type:      string;
   latitude:        number | null;
   longitude:       number | null;
   has_ledger_data: boolean;
+}
+
+/** Admin-managed brand group — shared shape for filter dropdowns and Settings thresholds. */
+export interface BrandGroupOption {
+  id:         string;
+  label:      string;
+  sort_order: number;
 }
 
 // ── Inventory dashboard types ─────────────────────────────────────────────────

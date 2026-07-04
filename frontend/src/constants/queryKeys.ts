@@ -11,6 +11,7 @@ export const queryKeys = {
     transfers: (plantId?: string, materialId?: string) => ['ledger', 'transfers', plantId ?? 'all', materialId ?? 'all'] as const,
     materials: (plantIds?: string[]) => ['ledger', 'materials', plantIds?.join(',') ?? 'all'] as const,
     plants:    () => ['ledger', 'plants'] as const,
+    brandGroups: () => ['ledger', 'brand-groups'] as const,
   },
 
   inventory: {

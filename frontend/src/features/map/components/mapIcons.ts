@@ -75,32 +75,28 @@ function makePinIcon(
   });
 }
 
-// ── Per-plant type classification ─────────────────────────────────────────────
-// 2140 = Puttalam Cement Works (factory)
-// 2141 = Ruhunu Cement Works (factory)
-// 2143 = AFR-Puttalam (Alternative Fuel & Raw materials facility — NOT a factory)
-// 2144 = Pre Processing Facility-KEPZ (pre-processing, not a cement factory)
-export const FACTORY_PLANT_IDS  = new Set(['2140', '2141', '2145', '2146']);
-export const TERMINAL_PLANT_IDS = new Set(['2122', '2123', '2124', '2127']);
-export const HQ_PLANT_IDS       = new Set(['2100', '2126', '2129', '2131']);
-
 // ── Icon cache ────────────────────────────────────────────────────────────────
+// Keyed by `${plantId}:${plantType}` so an admin changing a plant's type in
+// the admin panel produces a fresh icon instead of serving a stale cached one.
 const _cache = new Map<string, DivIcon>();
 
-export function getPlantIcon(plantId: string): DivIcon {
-  if (_cache.has(plantId)) return _cache.get(plantId)!;
+/** plantType comes from the plant's admin-managed Plant.plant_type field
+ * (factory | terminal | hq | depot) — not derived from the plant ID. */
+export function getPlantIcon(plantId: string, plantType: string): DivIcon {
+  const cacheKey = `${plantId}:${plantType}`;
+  if (_cache.has(cacheKey)) return _cache.get(cacheKey)!;
 
   let icon: DivIcon;
-  if (FACTORY_PLANT_IDS.has(plantId)) {
+  if (plantType === 'factory') {
     icon = makePinIcon('#F59E0B', '#D97706', FACTORY_INNER,  plantId);
-  } else if (TERMINAL_PLANT_IDS.has(plantId)) {
+  } else if (plantType === 'terminal') {
     icon = makePinIcon('#DC2626', '#B91C1C', TERMINAL_INNER, plantId);
-  } else if (HQ_PLANT_IDS.has(plantId)) {
+  } else if (plantType === 'hq') {
     icon = makePinIcon('#16A34A', '#15803D', HQ_INNER,       plantId);
   } else {
     icon = makePinIcon('#2563EB', '#1D4ED8', DEPOT_INNER,    plantId);
   }
 
-  _cache.set(plantId, icon);
+  _cache.set(cacheKey, icon);
   return icon;
 }

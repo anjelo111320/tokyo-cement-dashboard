@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { ChevronDown, X, Plus, Check, PackageCheck, Package } from 'lucide-react';
 import { cn } from '@/utils/cn';
-import type { LedgerMaterial } from '@/types/material_ledger.types';
+import type { LedgerMaterial, BrandGroupOption } from '@/types/material_ledger.types';
+import { useBrandGroups } from '@/features/material_ledger/hooks/useLedger';
 
 const CHIP_COLORS = [
   '#1B3550', '#2563EB', '#16A34A', '#DC2626',
@@ -22,27 +23,33 @@ function matchesCategory(desc: string, cat: CategoryFilter): boolean {
 }
 
 // ── Brand grouping ────────────────────────────────────────────────────────────
-
-function extractBrand(desc: string): string {
-  const idx = desc.indexOf(' - ');
-  return idx !== -1
-    ? desc.slice(0, idx).toUpperCase().trim()
-    : desc.toUpperCase().trim();
-}
+// Groups by the admin-managed Material.brand_group field (set in the admin
+// panel's Materials tab) — NOT a text guess — so renaming/regrouping a
+// material there is reflected here immediately. Materials with no group
+// assigned fall into "Unassigned" at the end.
 
 interface BrandGroup {
-  brand:     string;
+  id:        string | null;
+  label:     string;
   materials: LedgerMaterial[];
 }
 
-function buildBrandGroups(materials: LedgerMaterial[]): BrandGroup[] {
-  const map = new Map<string, LedgerMaterial[]>();
+function buildBrandGroups(materials: LedgerMaterial[], options: BrandGroupOption[]): BrandGroup[] {
+  const labelById = new Map(options.map(o => [o.id, o.label]));
+  const orderById = new Map(options.map(o => [o.id, o.sort_order]));
+  const map = new Map<string | null, LedgerMaterial[]>();
   materials.forEach(m => {
-    const brand = extractBrand(m.material_description);
-    if (!map.has(brand)) map.set(brand, []);
-    map.get(brand)!.push(m);
+    const key = m.brand_group ?? null;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(m);
   });
-  return Array.from(map.entries()).map(([brand, mats]) => ({ brand, materials: mats }));
+  return Array.from(map.entries())
+    .map(([id, mats]) => ({ id, label: id ? (labelById.get(id) ?? id) : 'Unassigned', materials: mats }))
+    .sort((a, b) => {
+      if (a.id === null) return 1;   // Unassigned always last
+      if (b.id === null) return -1;
+      return (orderById.get(a.id) ?? 999) - (orderById.get(b.id) ?? 999);
+    });
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -57,6 +64,7 @@ export function MultiMaterialPicker({ materials, selected, onChange }: Props) {
   const [open,           setOpen]           = useState(false);
   const [inStockOnly,    setInStockOnly]    = useState(false);
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all');
+  const { data: brandGroupOptions = [] } = useBrandGroups();
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -78,7 +86,7 @@ export function MultiMaterialPicker({ materials, selected, onChange }: Props) {
     : byCategory;
   const inStockCount   = byCategory.filter(m => m.closing_stock_mt > 0).length;
 
-  const groups = buildBrandGroups(visibleMaterials);
+  const groups = buildBrandGroups(visibleMaterials, brandGroupOptions);
 
   // ── Handlers ────────────────────────────────────────────────────────────────
 
@@ -279,7 +287,7 @@ export function MultiMaterialPicker({ materials, selected, onChange }: Props) {
                 const partSel = isBrandPartiallySelected(group);
 
                 return (
-                  <li key={group.brand}>
+                  <li key={group.id ?? '__unassigned__'}>
                     {/* Brand group header */}
                     <button
                       onClick={() => toggleBrand(group)}
@@ -295,7 +303,7 @@ export function MultiMaterialPicker({ materials, selected, onChange }: Props) {
                         {partSel && <span className="w-2 h-0.5 bg-[#1B3550] rounded" />}
                       </span>
                       <div className="flex-1 min-w-0">
-                        <p className="text-xs font-bold text-gray-800">{group.brand}</p>
+                        <p className="text-xs font-bold text-gray-800">{group.label}</p>
                         <p className="text-[10px] text-gray-400">
                           {group.materials.length} variant{group.materials.length !== 1 ? 's' : ''}
                         </p>

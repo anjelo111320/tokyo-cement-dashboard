@@ -3,18 +3,14 @@ import { ChevronDown, X, Plus, Check } from 'lucide-react';
 import { cn } from '@/utils/cn';
 import type { LedgerPlant } from '@/types/material_ledger.types';
 
-// ── Plant type classification (mirrors mapIcons.ts) ───────────────────────────
+// ── Plant type display — driven by the admin-managed Plant.plant_type field ───
 
 type PlantType = 'Factory' | 'Terminal' | 'HQ' | 'Depot';
 
-const FACTORY_IDS  = new Set(['2140', '2141', '2145', '2146']);
-const TERMINAL_IDS = new Set(['2120', '2121', '2122', '2123', '2124', '2125', '2127', '2128', '2142']);
-const HQ_IDS       = new Set(['2100', '2126', '2129', '2130', '2131']);
-
-function getPlantType(id: string): PlantType {
-  if (FACTORY_IDS.has(id))  return 'Factory';
-  if (TERMINAL_IDS.has(id)) return 'Terminal';
-  if (HQ_IDS.has(id))       return 'HQ';
+function getPlantType(plantType: string): PlantType {
+  if (plantType === 'factory')  return 'Factory';
+  if (plantType === 'terminal') return 'Terminal';
+  if (plantType === 'hq')       return 'HQ';
   return 'Depot';
 }
 
@@ -35,7 +31,7 @@ interface PlantGroup {
 function buildGroups(plants: LedgerPlant[]): PlantGroup[] {
   const map = new Map<PlantType, LedgerPlant[]>();
   TYPE_ORDER.forEach(t => map.set(t, []));
-  plants.forEach(p => map.get(getPlantType(p.plant_id))!.push(p));
+  plants.forEach(p => map.get(getPlantType(p.plant_type))!.push(p));
   return TYPE_ORDER
     .map(type => ({ type, plants: map.get(type)! }))
     .filter(g => g.plants.length > 0);
@@ -71,7 +67,8 @@ export function MultiPlantPicker({ plants, selected, onChange }: Props) {
   }
 
   function chipColor(id: string) {
-    return TYPE_META[getPlantType(id)].color;
+    const p = plants.find(p => p.plant_id === id);
+    return TYPE_META[getPlantType(p?.plant_type ?? 'depot')].color;
   }
 
   function toggle(id: string) {

@@ -1,5 +1,5 @@
 /**
- * plantTypeUtils.ts — Shared plant type classification helpers for map components.
+ * plantTypeUtils.ts — Shared plant type display helpers for map components.
  *
  * Single source of truth for icon, colour, background colour, and label per
  * plant type. Used by both MapPage (desktop detail panel) and MapBottomSheet
@@ -7,7 +7,6 @@
  */
 
 import { Factory, Warehouse, Anchor, Building2, type LucideIcon } from 'lucide-react';
-import { FACTORY_PLANT_IDS, TERMINAL_PLANT_IDS, HQ_PLANT_IDS } from './mapIcons';
 
 export interface PlantTypeInfo {
   /** Lucide icon component for this plant type */
@@ -21,16 +20,13 @@ export interface PlantTypeInfo {
 }
 
 /**
- * Returns display info for a plant based on its ID classification.
- * Falls back to Distribution Depot for any plant not in a named set.
+ * Returns display info for a plant's admin-managed plant_type
+ * (factory | terminal | hq | depot). Falls back to Distribution Depot for
+ * any other/unrecognised value.
  */
-export function getPlantTypeInfo(plantId: string): PlantTypeInfo {
-  const isFactory  = FACTORY_PLANT_IDS.has(plantId);
-  const isTerminal = TERMINAL_PLANT_IDS.has(plantId);
-  const isHQ       = HQ_PLANT_IDS.has(plantId);
-
-  if (isFactory)  return { Icon: Factory,   iconColor: '#F59E0B', iconBg: '#FEF3C7', typeLabel: 'Cement Factory'      };
-  if (isTerminal) return { Icon: Anchor,    iconColor: '#DC2626', iconBg: '#FEE2E2', typeLabel: 'Port / Terminal'      };
-  if (isHQ)       return { Icon: Building2, iconColor: '#16A34A', iconBg: '#DCFCE7', typeLabel: 'Corporate / HQ'      };
-  return            { Icon: Warehouse,  iconColor: '#2563EB', iconBg: '#DBEAFE', typeLabel: 'Distribution Depot' };
+export function getPlantTypeInfo(plantType: string): PlantTypeInfo {
+  if (plantType === 'factory')  return { Icon: Factory,   iconColor: '#F59E0B', iconBg: '#FEF3C7', typeLabel: 'Cement Factory'      };
+  if (plantType === 'terminal') return { Icon: Anchor,    iconColor: '#DC2626', iconBg: '#FEE2E2', typeLabel: 'Port / Terminal'      };
+  if (plantType === 'hq')       return { Icon: Building2, iconColor: '#16A34A', iconBg: '#DCFCE7', typeLabel: 'Corporate / HQ'      };
+  return                          { Icon: Warehouse,  iconColor: '#2563EB', iconBg: '#DBEAFE', typeLabel: 'Distribution Depot' };
 }
