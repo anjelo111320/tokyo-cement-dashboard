@@ -12,11 +12,6 @@ class CsvConfigSchema(BaseModel):
     files: dict[str, CsvFileConfig]
 
 
-class CsvConfigUpdateRequest(BaseModel):
-    csv_base_path: str | None = None
-    refresh_interval_seconds: int | None = None
-
-
 class IngestionJobResponse(BaseModel):
     job_id: str
     status: str

@@ -36,7 +36,6 @@ from backend.schemas.common import ApiResponse
 from backend.schemas.settings import (
     CsvConfigSchema,
     CsvFileConfig,
-    CsvConfigUpdateRequest,
     IngestionJobResponse,
 )
 from backend.schemas.material_ledger import MaterialThresholdSchema
@@ -50,10 +49,10 @@ router = APIRouter(prefix="/settings", tags=["settings"])
 
 
 @router.get("/csv-config", response_model=ApiResponse[CsvConfigSchema])
-async def get_csv_config():
+async def get_csv_config(_: User = Depends(get_current_user)):
     """
     Returns the current data source configuration:
-      - csv_base_path: folder containing the 5 CSV files.
+      - csv_base_path: folder containing the bundled CSV files.
       - refresh_interval_seconds: how often the scheduler reloads them.
       - files: mapping of logical name → filename + enabled flag.
     """
@@ -66,37 +65,12 @@ async def get_csv_config():
     return ApiResponse(data=data)
 
 
-@router.post("/csv-config", response_model=ApiResponse[CsvConfigSchema])
-async def update_csv_config(body: CsvConfigUpdateRequest):
-    """
-    Updates the CSV configuration at runtime without restarting the server.
-    Only the provided fields are changed — omit a field to leave it unchanged.
-
-    Note: This mutation is in-memory only and is lost on restart.
-    Future Phase 2: persist to database.
-    """
-    if body.csv_base_path:
-        app_settings.csv_base_path = body.csv_base_path
-    if body.refresh_interval_seconds:
-        app_settings.csv_refresh_interval_seconds = body.refresh_interval_seconds
-
-    data = CsvConfigSchema(
-        csv_base_path=app_settings.csv_base_path,
-        refresh_interval_seconds=app_settings.csv_refresh_interval_seconds,
-        files={k: CsvFileConfig(filename=v, enabled=True) for k, v in CSV_FILES.items()},
-    )
-    return ApiResponse(data=data)
-
-
 @router.post("/ingestion/trigger", response_model=ApiResponse[IngestionJobResponse])
-async def trigger_ingestion():
+async def trigger_ingestion(_: User = Depends(get_current_user)):
     """
     Forces an immediate reload of all CSV files into the in-memory cache.
     Normally the scheduler does this automatically every 15 minutes.
-    Use this after manually updating the CSV files outside the normal schedule.
-
-    The reload is synchronous — the response is returned only after
-    all files have been parsed and the cache has been updated.
+    Pinned (uploaded) datasets are untouched — only disk-backed files reload.
     """
     csv_cache.load_all()
     data = IngestionJobResponse(

@@ -42,14 +42,6 @@ export function useInventoryAlerts(materialIds?: string[]) {
   });
 }
 
-export function useThresholds() {
-  return useQuery({
-    queryKey: queryKeys.inventory.thresholds(),
-    queryFn: () => materialLedgerService.getThresholds(),
-    staleTime: 30 * 60_000,
-  });
-}
-
 export function useLedgerMaterials(plantIds?: string[]) {
   return useQuery({
     queryKey: queryKeys.ledger.materials(plantIds),
