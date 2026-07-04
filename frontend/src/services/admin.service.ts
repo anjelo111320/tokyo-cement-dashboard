@@ -8,6 +8,7 @@ export interface AdminPlant {
   lng: number | null;
   plant_type: string;
   is_active: boolean;
+  is_new: boolean;
 }
 
 export interface AdminMaterial {
@@ -17,6 +18,7 @@ export interface AdminMaterial {
   is_bag: boolean;
   is_bulk: boolean;
   is_active: boolean;
+  is_new: boolean;
 }
 
 export interface AdminBrandGroup {

@@ -46,6 +46,7 @@ class PlantUpdate(BaseModel):
     lng: Optional[float] = None
     plant_type: Optional[str] = None
     is_active: Optional[bool] = None
+    is_new: Optional[bool] = None  # lets the frontend "Dismiss" action clear the highlight
 
 
 @router.get("/plants")
@@ -54,7 +55,8 @@ async def list_plants(db: AsyncSession = Depends(get_db), _: User = Depends(get_
     plants = sorted(plants, key=lambda p: (_PLANT_TYPE_ORDER.get(p.plant_type, 99), p.name))
     return {"success": True, "data": [
         {"plant_id": p.plant_id, "name": p.name, "city": p.city, "lat": float(p.lat) if p.lat else None,
-         "lng": float(p.lng) if p.lng else None, "plant_type": p.plant_type, "is_active": p.is_active}
+         "lng": float(p.lng) if p.lng else None, "plant_type": p.plant_type, "is_active": p.is_active,
+         "is_new": p.is_new}
         for p in plants
     ]}
 
@@ -77,6 +79,9 @@ async def update_plant(plant_id: str, body: PlantUpdate, db: AsyncSession = Depe
     if not plant:
         raise HTTPException(status_code=404, detail="Plant not found")
     updates = body.model_dump(exclude_unset=True)
+    # Any admin edit counts as acknowledging a "new" row, not just an explicit Dismiss.
+    if updates and "is_new" not in updates:
+        updates["is_new"] = False
     await plant_repo.update(db, plant, **updates)
     return {"success": True}
 
@@ -86,7 +91,7 @@ async def delete_plant(plant_id: str, db: AsyncSession = Depends(get_db), _: Use
     plant = await plant_repo.get_by_id(db, plant_id)
     if not plant:
         raise HTTPException(status_code=404, detail="Plant not found")
-    await plant_repo.update(db, plant, is_active=False)
+    await plant_repo.update(db, plant, is_active=False, is_new=False)
     return {"success": True}
 
 
@@ -118,6 +123,7 @@ class MaterialUpdate(BaseModel):
     is_bag: Optional[bool] = None
     is_bulk: Optional[bool] = None
     is_active: Optional[bool] = None
+    is_new: Optional[bool] = None  # lets the frontend "Dismiss" action clear the highlight
 
 
 @router.get("/materials")
@@ -136,7 +142,8 @@ async def list_materials(db: AsyncSession = Depends(get_db), _: User = Depends(g
 
     return {"success": True, "data": [
         {"material_id": m.material_id, "description": m.description,
-         "brand_group": m.brand_group, "is_bag": m.is_bag, "is_bulk": m.is_bulk, "is_active": m.is_active}
+         "brand_group": m.brand_group, "is_bag": m.is_bag, "is_bulk": m.is_bulk, "is_active": m.is_active,
+         "is_new": m.is_new}
         for m in mats
     ]}
 
@@ -162,6 +169,9 @@ async def update_material(material_id: str, body: MaterialUpdate, db: AsyncSessi
     updates = body.model_dump(exclude_unset=True)
     if "brand_group" in updates:
         await _validate_brand_group(db, updates["brand_group"])
+    # Any admin edit counts as acknowledging a "new" row, not just an explicit Dismiss.
+    if updates and "is_new" not in updates:
+        updates["is_new"] = False
     for k, v in updates.items():
         setattr(mat, k, v)
     await db.commit()
@@ -175,6 +185,7 @@ async def delete_material(material_id: str, db: AsyncSession = Depends(get_db), 
     if not mat:
         raise HTTPException(status_code=404, detail="Material not found")
     mat.is_active = False
+    mat.is_new = False
     await db.commit()
     return {"success": True}
 
@@ -203,12 +214,15 @@ async def sync_materials(db: AsyncSession = Depends(get_db), _: User = Depends(r
         result = await db.execute(select(Material).where(Material.material_id == mat_id))
         existing = result.scalar_one_or_none()
         if not existing:
+            # Manually triggered by an admin on an already-established system
+            # (never used for a cold/empty-table seed) — always flag as new.
             db.add(Material(
                 material_id=mat_id,
                 description=desc,
                 brand_group=_classify_brand(desc),
                 is_bag=not _material_is_bulk(desc),
                 is_bulk=_material_is_bulk(desc),
+                is_new=True,
             ))
             count += 1
     await db.commit()

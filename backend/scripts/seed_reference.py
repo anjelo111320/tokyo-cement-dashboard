@@ -43,7 +43,10 @@ def _plant_type(plant_id: str) -> str:
     return "depot"
 
 
-async def _seed_plants(db) -> int:
+async def _seed_plants(db, flag_as_new: bool) -> int:
+    """flag_as_new: mark inserted rows is_new=True so the admin panel highlights
+    them. False on a cold/bulk seed (empty table) — that's a baseline import,
+    not an individual discovery worth flagging."""
     repo = PlantMasterCsvRepository()
     inserted = 0
     for p in repo.get_all_plants():
@@ -61,12 +64,13 @@ async def _seed_plants(db) -> int:
             lat=p.latitude,
             lng=p.longitude,
             plant_type=_plant_type(p.plant_id),
+            is_new=flag_as_new,
         )
         inserted += 1
     return inserted
 
 
-async def _seed_materials(db) -> int:
+async def _seed_materials(db, flag_as_new: bool) -> int:
     from backend.core.material_ledger_config import COLUMN_MAP
     from backend.services.material_ledger_service import _classify_brand, _material_is_bulk
 
@@ -95,6 +99,7 @@ async def _seed_materials(db) -> int:
             brand_group=_classify_brand(desc),
             is_bag=not _material_is_bulk(desc),
             is_bulk=_material_is_bulk(desc),
+            is_new=flag_as_new,
         ))
         inserted += 1
     await db.commit()
@@ -110,8 +115,14 @@ async def _run() -> None:
     csv_cache.load_all()
 
     async for db in get_db():
-        plants = await _seed_plants(db)
-        materials = await _seed_materials(db)
+        # Distinguish "cold start / just wiped" (table empty → this is a bulk
+        # baseline import, don't flag any of it) from "already-established
+        # system, CSV now has an ID we've never seen" (flag it — genuinely new).
+        had_plants = bool(await plant_repo.get_all(db))
+        had_materials = (await db.execute(select(Material.material_id).limit(1))).first() is not None
+
+        plants = await _seed_plants(db, flag_as_new=had_plants)
+        materials = await _seed_materials(db, flag_as_new=had_materials)
         print(f"[seed_reference] Inserted {plants} new plants, {materials} new materials "
               f"(existing rows left untouched).")
         return

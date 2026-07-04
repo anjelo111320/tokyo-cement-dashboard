@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { adminService, type AdminPlant, type AdminMaterial, type AdminBrandGroup, type SharePointConfig } from '@/services/admin.service';
 import { cn } from '@/utils/cn';
-import { Trash2, Plus, X, RotateCcw } from 'lucide-react';
+import { Trash2, Plus, X, RotateCcw, Check } from 'lucide-react';
 
 type Tab = 'plants' | 'materials' | 'sharepoint' | 'users';
 
@@ -27,7 +27,7 @@ function SaveBtn({ onClick, loading }: { onClick: () => void; loading?: boolean 
 // ── Plants tab ─────────────────────────────────────────────────────────────────
 
 const PLANT_TYPES = ['depot', 'factory', 'terminal', 'hq'];
-const BLANK_PLANT: AdminPlant = { plant_id: '', name: '', city: null, lat: null, lng: null, plant_type: 'depot', is_active: true };
+const BLANK_PLANT: AdminPlant = { plant_id: '', name: '', city: null, lat: null, lng: null, plant_type: 'depot', is_active: true, is_new: false };
 
 function PlantsTab() {
   const qc = useQueryClient();
@@ -126,10 +126,16 @@ function PlantsTab() {
                 setEdits(prev => ({ ...prev, [p.plant_id]: { ...prev[p.plant_id], [key]: val } }));
 
               return (
-                <tr key={p.plant_id} className={cn('transition-colors', hidden ? 'bg-gray-50 opacity-60' : 'hover:bg-gray-50')}>
+                <tr key={p.plant_id} className={cn(
+                  'transition-colors',
+                  hidden ? 'bg-gray-50 opacity-60' : p.is_new ? 'bg-yellow-50 hover:bg-yellow-100' : 'hover:bg-gray-50',
+                )}>
                   <td className="px-3 py-2 font-mono text-gray-500">
                     {p.plant_id}
                     {hidden && <span className="ml-1.5 text-[9px] font-bold px-1 py-0.5 bg-gray-200 text-gray-500 rounded">HIDDEN</span>}
+                    {!hidden && p.is_new && (
+                      <span className="ml-1.5 text-[9px] font-bold px-1 py-0.5 bg-yellow-200 text-yellow-800 rounded" title="Discovered from CSV — not yet reviewed">NEW</span>
+                    )}
                   </td>
                   <td className="px-3 py-2">
                     <input
@@ -170,6 +176,15 @@ function PlantsTab() {
                           loading={updateMut.isPending}
                         />
                       )}
+                      {!hidden && p.is_new && !dirty && (
+                        <button
+                          onClick={() => updateMut.mutate({ id: p.plant_id, body: { is_new: false } })}
+                          className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-semibold rounded bg-yellow-100 text-yellow-800 hover:bg-yellow-200 transition-colors"
+                          title="Dismiss — mark as reviewed"
+                        >
+                          <Check size={10} /> Dismiss
+                        </button>
+                      )}
                       {hidden ? (
                         <button
                           onClick={() => updateMut.mutate({ id: p.plant_id, body: { is_active: true } })}
@@ -204,7 +219,7 @@ function PlantsTab() {
 
 // ── Materials tab ──────────────────────────────────────────────────────────────
 
-const BLANK_MAT: AdminMaterial = { material_id: '', description: '', brand_group: null, is_bag: true, is_bulk: false, is_active: true };
+const BLANK_MAT: AdminMaterial = { material_id: '', description: '', brand_group: null, is_bag: true, is_bulk: false, is_active: true, is_new: false };
 
 /** Brand group dropdown, fed by the admin-managed brand_groups table. Includes
  * an inline "add new group" flow so a new group is usable immediately —
@@ -380,10 +395,16 @@ function MaterialsTab() {
                 setEdits(prev => ({ ...prev, [m.material_id]: { ...prev[m.material_id], [key]: val } }));
 
               return (
-                <tr key={m.material_id} className={cn('transition-colors', hidden ? 'bg-gray-50 opacity-60' : 'hover:bg-gray-50')}>
+                <tr key={m.material_id} className={cn(
+                  'transition-colors',
+                  hidden ? 'bg-gray-50 opacity-60' : m.is_new ? 'bg-yellow-50 hover:bg-yellow-100' : 'hover:bg-gray-50',
+                )}>
                   <td className="px-3 py-2 font-mono text-gray-500">
                     {m.material_id}
                     {hidden && <span className="ml-1.5 text-[9px] font-bold px-1 py-0.5 bg-gray-200 text-gray-500 rounded">HIDDEN</span>}
+                    {!hidden && m.is_new && (
+                      <span className="ml-1.5 text-[9px] font-bold px-1 py-0.5 bg-yellow-200 text-yellow-800 rounded" title="Discovered from CSV — not yet reviewed">NEW</span>
+                    )}
                   </td>
                   <td className="px-3 py-2">
                     <input className="border border-gray-200 rounded px-2 py-1 text-xs w-56 focus:outline-none focus:ring-1 focus:ring-[#1D4E6B] disabled:opacity-50"
@@ -418,6 +439,15 @@ function MaterialsTab() {
                           onClick={() => saveMut.mutate({ id: m.material_id, body: e })}
                           loading={saveMut.isPending}
                         />
+                      )}
+                      {!hidden && m.is_new && !dirty && (
+                        <button
+                          onClick={() => saveMut.mutate({ id: m.material_id, body: { is_new: false } })}
+                          className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-semibold rounded bg-yellow-100 text-yellow-800 hover:bg-yellow-200 transition-colors"
+                          title="Dismiss — mark as reviewed"
+                        >
+                          <Check size={10} /> Dismiss
+                        </button>
                       )}
                       {hidden ? (
                         <button

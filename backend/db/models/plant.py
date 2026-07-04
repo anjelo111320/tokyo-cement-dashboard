@@ -20,4 +20,8 @@ class Plant(Base):
     # factory | terminal | hq | depot
     plant_type: Mapped[str] = mapped_column(String, nullable=False, default="depot")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # True only when auto-discovered from a CSV plant_id never seen before
+    # (seed_reference.py). False for admin-created plants and pre-existing
+    # rows. Admin panel highlights is_new=True rows; any edit clears it.
+    is_new: Mapped[bool] = mapped_column(Boolean, default=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

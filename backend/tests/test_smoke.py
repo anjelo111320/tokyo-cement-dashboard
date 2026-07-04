@@ -218,6 +218,57 @@ def test_plants_sorted_by_type_group(admin_client):
     assert ids_in_order.index("8002") < ids_in_order.index("8001")
 
 
+# ── New-item highlighting (admin panel yellow row) ─────────────────────────────
+
+def test_admin_created_rows_are_not_flagged_new(admin_client):
+    # An admin manually adding a plant/material already knows about it —
+    # only CSV-auto-discovered rows should ever start as is_new=True.
+    admin_client.post("/api/v1/admin/plants", json={"plant_id": "7001", "name": "Manual Plant"})
+    admin_client.post("/api/v1/admin/materials", json={"material_id": "SMOKE-MANUAL-1", "description": "Manual Material"})
+
+    plants = {p["plant_id"]: p for p in admin_client.get("/api/v1/admin/plants").json()["data"]}
+    mats = {m["material_id"]: m for m in admin_client.get("/api/v1/admin/materials").json()["data"]}
+    assert plants["7001"]["is_new"] is False
+    assert mats["SMOKE-MANUAL-1"]["is_new"] is False
+
+
+def test_editing_a_new_row_clears_the_flag(admin_client, async_session_factory):
+    import anyio
+    from backend.db.models.plant import Plant
+
+    async def _mark_new():
+        async with async_session_factory() as db:
+            p = await db.get(Plant, "7001")
+            p.is_new = True
+            await db.commit()
+
+    anyio.run(_mark_new)
+    plants = {p["plant_id"]: p for p in admin_client.get("/api/v1/admin/plants").json()["data"]}
+    assert plants["7001"]["is_new"] is True
+
+    # Editing any field implicitly acknowledges the row.
+    admin_client.put("/api/v1/admin/plants/7001", json={"city": "Colombo"})
+    plants = {p["plant_id"]: p for p in admin_client.get("/api/v1/admin/plants").json()["data"]}
+    assert plants["7001"]["is_new"] is False
+
+
+def test_explicit_dismiss_clears_the_flag_without_other_changes(admin_client, async_session_factory):
+    import anyio
+    from backend.db.models.material import Material
+
+    async def _mark_new():
+        async with async_session_factory() as db:
+            m = await db.get(Material, "SMOKE-MANUAL-1")
+            m.is_new = True
+            await db.commit()
+
+    anyio.run(_mark_new)
+    res = admin_client.put("/api/v1/admin/materials/SMOKE-MANUAL-1", json={"is_new": False})
+    assert res.status_code == 200
+    mats = {m["material_id"]: m for m in admin_client.get("/api/v1/admin/materials").json()["data"]}
+    assert mats["SMOKE-MANUAL-1"]["is_new"] is False
+
+
 # ── CSV validation ────────────────────────────────────────────────────────────
 
 def test_csv_missing_columns_rejected(tmp_path):

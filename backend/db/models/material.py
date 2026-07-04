@@ -14,4 +14,9 @@ class Material(Base):
     is_bag: Mapped[bool] = mapped_column(Boolean, default=True)
     is_bulk: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # True only when auto-discovered from a CSV material_id never seen before
+    # (seed_reference.py / materials/sync). False for admin-created materials
+    # and pre-existing rows. Admin panel highlights is_new=True rows; any
+    # edit clears it.
+    is_new: Mapped[bool] = mapped_column(Boolean, default=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
