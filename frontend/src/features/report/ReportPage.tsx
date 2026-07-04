@@ -3,12 +3,11 @@ import { ChevronDown, ChevronUp, Package, TrendingUp, TrendingDown, ArrowLeftRig
 import { PageHeader } from '@/components/common/PageHeader';
 import { Skeleton } from '@/components/common/LoadingSkeleton';
 import { cn } from '@/utils/cn';
-import { useInventoryReport, useLedgerMaterials } from '@/features/material_ledger/hooks/useLedger';
+import { useInventoryReport, useLedgerMaterials, useLedgerTransfers } from '@/features/material_ledger/hooks/useLedger';
 import { MultiMaterialPicker } from '@/features/home/components/MultiMaterialPicker';
 import { useSettingsStore, convertQty, type UnitScale, type DisplayUnit } from '@/hooks/useSettingsStore';
 import type { MaterialReportCard, PlantReportRow } from '@/types/material_ledger.types';
 import { LocationSummaryView } from './components/LocationSummaryView';
-import { MaterialPlantGridView } from './components/MaterialPlantGridView';
 
 type ReportView = 'material' | 'location';
 type MaterialSubView = 'by_material' | 'by_plant';
@@ -187,18 +186,203 @@ function MaterialCard({ card, hideZeros, unitScale }: {
   );
 }
 
+// ── Plant card (By Plant view — materials as rows) ─────────────────────────────
+
+interface MaterialRowEntry {
+  material_id:          string;
+  material_description: string;
+  row:                   PlantReportRow;
+  outHintPlant:          string | null;
+  inHintPlant:           string | null;
+}
+
+interface PlantGroup {
+  plant_id:                        string;
+  plant_name:                      string;
+  city:                            string | null;
+  materials:                       MaterialRowEntry[];
+  total_on_hand:                   number;
+  total_transit_out:               number;
+  total_transit_in:                number;
+  total_inventory_without_transit: number;
+}
+
+function isPlantGroupInactive(group: PlantGroup) {
+  return group.materials.every(m => isAllZero(m.row));
+}
+
+function PlantCard({ group, hideZeros, getRowScale, unitLabel }: {
+  group:       PlantGroup;
+  hideZeros:   boolean;
+  getRowScale: (materialId: string) => UnitScale;
+  unitLabel:   string;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+
+  const rows        = hideZeros ? group.materials.filter(m => !isAllZero(m.row)) : group.materials;
+  const activeCount  = group.materials.filter(m => !isAllZero(m.row)).length;
+
+  // Plant-level totals mix quantities across different materials, which can have
+  // different bags-per-MT factors — so unlike per-row cells (each tied to one
+  // material and free to follow the page's MT/Bags toggle), totals here are only
+  // physically meaningful summed in MT and are always shown that way.
+  const badgeOnHand   = fmtQty(group.total_on_hand,     MT_SCALE);
+  const badgeTransIn  = fmtQty(group.total_transit_in,  MT_SCALE);
+  const badgeTransOut = fmtQty(group.total_transit_out, MT_SCALE);
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+
+      {/* ── Card header ───────────────────────────────────────────── */}
+      <button
+        onClick={() => setCollapsed(c => !c)}
+        className="w-full flex items-center gap-3 px-5 py-4 text-left hover:bg-gray-50 transition-colors"
+      >
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-bold text-gray-900 truncate">{group.plant_name}</p>
+          <p className="text-[10px] font-mono text-gray-400 mt-0.5">
+            {group.plant_id}{group.city ? ` · ${group.city}` : ''}
+          </p>
+        </div>
+
+        {/* Summary badges — always MT, see note above */}
+        <div className="hidden sm:flex items-center gap-2 shrink-0">
+          {group.total_on_hand > 0 && (
+            <span className="text-[10px] font-bold bg-[#1B3550]/10 text-[#1B3550] px-2 py-1 rounded-lg">
+              {badgeOnHand} MT on hand
+            </span>
+          )}
+          {group.total_transit_in > 0 && (
+            <span className="text-[10px] font-bold bg-green-100 text-green-700 px-2 py-1 rounded-lg">
+              +{badgeTransIn} MT incoming
+            </span>
+          )}
+          {group.total_transit_out > 0 && (
+            <span className="text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-1 rounded-lg">
+              {badgeTransOut} MT outgoing
+            </span>
+          )}
+          <span className="text-[10px] text-gray-400">
+            {activeCount} active material{activeCount !== 1 ? 's' : ''}
+          </span>
+        </div>
+
+        {collapsed ? <ChevronDown size={16} className="text-gray-400 shrink-0" /> : <ChevronUp size={16} className="text-gray-400 shrink-0" />}
+      </button>
+
+      {/* ── Table ─────────────────────────────────────────────────── */}
+      {!collapsed && (
+        <div className="overflow-x-auto border-t border-gray-100">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-gray-50 border-b border-gray-100">
+                <th className="text-left px-4 py-2.5 font-semibold text-gray-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Material</th>
+                {COLS.map(col => (
+                  <th key={col.key} className={cn('text-right px-4 py-2.5 font-semibold uppercase tracking-wide text-[10px] whitespace-nowrap', col.color)}>
+                    {col.short}
+                    <span className="normal-case font-normal text-gray-400 ml-1">({unitLabel})</span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-4 py-6 text-center text-xs text-gray-400">
+                    No activity at this plant
+                  </td>
+                </tr>
+              ) : (
+                rows.map(m => {
+                  const row         = m.row;
+                  const hasActivity = !isAllZero(row);
+                  const scale       = getRowScale(m.material_id);
+                  return (
+                    <tr
+                      key={m.material_id}
+                      className={cn(
+                        'border-b border-gray-50 last:border-0',
+                        hasActivity ? 'hover:bg-[#0D1F2D]/3' : 'opacity-40',
+                      )}
+                    >
+                      <td className="px-4 py-2.5">
+                        <p className="text-gray-800 font-medium truncate max-w-56">{m.material_description}</p>
+                        <p className="text-[10px] font-mono text-gray-400">{m.material_id}</p>
+                      </td>
+                      <td className={cn('px-4 py-2.5 text-right font-semibold tabular-nums', row.on_hand_mt > 0 ? 'text-[#1B3550]' : 'text-gray-300')}>
+                        {fmtQty(row.on_hand_mt, scale)}
+                      </td>
+                      <td className={cn('px-4 py-2.5 text-right font-semibold tabular-nums', row.transit_out_mt > 0 ? 'text-amber-600' : 'text-gray-300')}>
+                        {fmtQty(row.transit_out_mt, scale)}
+                        {row.transit_out_mt > 0 && m.outHintPlant && (
+                          <p className="text-[9px] font-normal text-amber-500/70 mt-0.5 whitespace-nowrap">→ {m.outHintPlant}</p>
+                        )}
+                      </td>
+                      <td className={cn('px-4 py-2.5 text-right font-semibold tabular-nums', row.transit_in_mt > 0 ? 'text-green-600' : 'text-gray-300')}>
+                        {fmtQty(row.transit_in_mt, scale)}
+                        {row.transit_in_mt > 0 && m.inHintPlant && (
+                          <p className="text-[9px] font-normal text-green-600/70 mt-0.5 whitespace-nowrap">← {m.inHintPlant}</p>
+                        )}
+                      </td>
+                      <td className={cn(
+                        'px-4 py-2.5 text-right font-bold tabular-nums',
+                        row.inventory_without_transit > 0 ? 'text-[#2E6B8A]' :
+                        row.inventory_without_transit < 0 ? 'text-red-500' : 'text-gray-300',
+                      )}>
+                        {fmtQty(row.inventory_without_transit, scale)}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+
+            {/* Totals row — always MT, see note above */}
+            {rows.some(m => !isAllZero(m.row)) && (
+              <tfoot>
+                <tr className="bg-[#0D1F2D]/5 border-t-2 border-gray-200">
+                  <td className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-gray-500">
+                    Total (MT)
+                  </td>
+                  <td className="px-4 py-2.5 text-right font-bold text-[#1B3550] tabular-nums text-xs">
+                    {badgeOnHand}
+                  </td>
+                  <td className="px-4 py-2.5 text-right font-bold text-amber-600 tabular-nums text-xs">
+                    {badgeTransOut}
+                  </td>
+                  <td className="px-4 py-2.5 text-right font-bold text-green-600 tabular-nums text-xs">
+                    {badgeTransIn}
+                  </td>
+                  <td className={cn(
+                    'px-4 py-2.5 text-right font-bold tabular-nums text-xs',
+                    group.total_inventory_without_transit >= 0 ? 'text-[#2E6B8A]' : 'text-red-500',
+                  )}>
+                    {fmtQty(group.total_inventory_without_transit, MT_SCALE)}
+                  </td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export function ReportPage() {
-  const [reportView,          setReportView]          = useState<ReportView>('material');
-  const [materialSubView,     setMaterialSubView]     = useState<MaterialSubView>('by_material');
-  const [selectedMaterials,   setSelectedMaterials]   = useState<string[]>([]);
-  const [hideZeros,           setHideZeros]           = useState(true);
+  const [reportView,            setReportView]            = useState<ReportView>('material');
+  const [materialSubView,       setMaterialSubView]       = useState<MaterialSubView>('by_material');
+  const [selectedMaterials,     setSelectedMaterials]     = useState<string[]>([]);
+  const [hideZeros,             setHideZeros]             = useState(true);
   const [hideInactiveMaterials, setHideInactiveMaterials] = useState(true);
-  const [unitOverride,        setUnitOverride]        = useState<DisplayUnit | null>(null);
+  const [hideInactivePlants,    setHideInactivePlants]    = useState(true);
+  const [unitOverride,          setUnitOverride]          = useState<DisplayUnit | null>(null);
 
-  const { data: report,    isLoading: reportLoading } = useInventoryReport();
-  const { data: materials, isLoading: matsLoading   } = useLedgerMaterials();
+  const { data: report,       isLoading: reportLoading } = useInventoryReport();
+  const { data: materials,    isLoading: matsLoading   } = useLedgerMaterials();
+  const { data: transferData } = useLedgerTransfers();
   const { allUnitScales, getUnitScale } = useSettingsStore();
 
   // Derive what Settings has configured as the default unit
@@ -221,6 +405,69 @@ export function ReportPage() {
     return cards;
   }, [report, selectedMaterials, hideInactiveMaterials]);
 
+  // Best (largest) counterpart plant per (plant, material) — a lightweight hint only.
+  // Sourced from the separate VM-based transfer feed, which is not guaranteed to
+  // reconcile with the BV-based Transit OUT/IN totals shown alongside it.
+  const transferHints = useMemo(() => {
+    const outMap = new Map<string, string>();
+    const inMap  = new Map<string, string>();
+    const bestOut = new Map<string, number>();
+    const bestIn  = new Map<string, number>();
+    for (const t of transferData?.transfers ?? []) {
+      if (t.source_plant_id === t.dest_plant_id) continue;
+      const outKey = `${t.source_plant_id}|${t.material_id}`;
+      if (t.quantity > (bestOut.get(outKey) ?? -Infinity)) {
+        bestOut.set(outKey, t.quantity);
+        outMap.set(outKey, t.dest_plant_id);
+      }
+      const inKey = `${t.dest_plant_id}|${t.material_id}`;
+      if (t.quantity > (bestIn.get(inKey) ?? -Infinity)) {
+        bestIn.set(inKey, t.quantity);
+        inMap.set(inKey, t.source_plant_id);
+      }
+    }
+    return { outMap, inMap };
+  }, [transferData]);
+
+  const plantGroups = useMemo<PlantGroup[]>(() => {
+    if (filteredCards.length === 0) return [];
+    const groups: PlantGroup[] = filteredCards[0].plants.map(p => ({
+      plant_id: p.plant_id,
+      plant_name: p.plant_name,
+      city: p.city,
+      materials: [],
+      total_on_hand: 0,
+      total_transit_out: 0,
+      total_transit_in: 0,
+      total_inventory_without_transit: 0,
+    }));
+    const byPlantId = new Map(groups.map(g => [g.plant_id, g]));
+
+    for (const card of filteredCards) {
+      for (const row of card.plants) {
+        const g = byPlantId.get(row.plant_id);
+        if (!g) continue;
+        g.materials.push({
+          material_id:          card.material_id,
+          material_description: card.material_description,
+          row,
+          outHintPlant: transferHints.outMap.get(`${row.plant_id}|${card.material_id}`) ?? null,
+          inHintPlant:  transferHints.inMap.get(`${row.plant_id}|${card.material_id}`) ?? null,
+        });
+        g.total_on_hand                   += row.on_hand_mt;
+        g.total_transit_out                += row.transit_out_mt;
+        g.total_transit_in                 += row.transit_in_mt;
+        g.total_inventory_without_transit += row.inventory_without_transit;
+      }
+    }
+    return groups;
+  }, [filteredCards, transferHints]);
+
+  const visiblePlantGroups = useMemo(() => {
+    if (!hideInactivePlants) return plantGroups;
+    return plantGroups.filter(g => !isPlantGroupInactive(g));
+  }, [plantGroups, hideInactivePlants]);
+
   const isLoading = reportLoading || matsLoading;
 
   return (
@@ -228,9 +475,11 @@ export function ReportPage() {
       <PageHeader
         title="Stock Sheet"
         subtitle={
-          reportView === 'material'
-            ? `Per-material breakdown across all plants · ${filteredCards.length} of ${report?.materials.length ?? 0} materials · showing in ${effectiveUnit}`
-            : 'Brand × location grid — floor stock and period dispatch'
+          reportView !== 'material'
+            ? 'Brand × location grid — floor stock and period dispatch'
+            : materialSubView === 'by_material'
+              ? `Per-material breakdown across all plants · ${filteredCards.length} of ${report?.materials.length ?? 0} materials · showing in ${effectiveUnit}`
+              : `Per-plant breakdown across all materials · ${visiblePlantGroups.length} of ${plantGroups.length} plants · showing in ${effectiveUnit}`
         }
       />
 
@@ -346,22 +595,39 @@ export function ReportPage() {
               <span className="sm:hidden">{hideInactiveMaterials ? 'Hide inactive ✓' : 'Hide inactive'}</span>
             </button>
 
-            {/* Hide zero rows toggle — only meaningful in the By Material (plants-as-rows) layout */}
-            {materialSubView === 'by_material' && (
+            {/* Hide inactive plants toggle — only relevant in the By Plant (materials-as-rows) layout */}
+            {materialSubView === 'by_plant' && (
               <button
-                onClick={() => setHideZeros(v => !v)}
+                onClick={() => setHideInactivePlants(v => !v)}
                 className={cn(
                   'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all whitespace-nowrap',
-                  hideZeros
+                  hideInactivePlants
                     ? 'bg-[#1B3550] text-white border-[#1B3550]'
                     : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200',
                 )}
               >
                 <Filter size={11} />
-                <span className="hidden sm:inline">{hideZeros ? 'Hiding zero rows' : 'Show active rows only'}</span>
-                <span className="sm:hidden">{hideZeros ? 'Hide zeros ✓' : 'Hide zeros'}</span>
+                <span className="hidden sm:inline">{hideInactivePlants ? 'Hiding inactive plants' : 'Show inactive plants'}</span>
+                <span className="sm:hidden">{hideInactivePlants ? 'Hide inactive ✓' : 'Hide inactive'}</span>
               </button>
             )}
+
+            {/* Hide zero rows toggle — hides zero rows within each card/table, whichever
+                entity the rows represent (plants inside a material card, or materials
+                inside a plant card) */}
+            <button
+              onClick={() => setHideZeros(v => !v)}
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all whitespace-nowrap',
+                hideZeros
+                  ? 'bg-[#1B3550] text-white border-[#1B3550]'
+                  : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200',
+              )}
+            >
+              <Filter size={11} />
+              <span className="hidden sm:inline">{hideZeros ? 'Hiding zero rows' : 'Show active rows only'}</span>
+              <span className="sm:hidden">{hideZeros ? 'Hide zeros ✓' : 'Hide zeros'}</span>
+            </button>
           </div>
         </div>
       </div>
@@ -414,13 +680,22 @@ export function ReportPage() {
             />
           ))}
         </div>
+      ) : visiblePlantGroups.length === 0 ? (
+        <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
+          <p className="text-sm text-gray-500">No plants match your filters</p>
+        </div>
       ) : (
-        <MaterialPlantGridView
-          cards={filteredCards}
-          getUnitScale={getUnitScale}
-          effectiveUnit={effectiveUnit}
-          unitScaleMT={MT_SCALE}
-        />
+        <div className="space-y-4">
+          {visiblePlantGroups.map(group => (
+            <PlantCard
+              key={group.plant_id}
+              group={group}
+              hideZeros={hideZeros}
+              getRowScale={materialId => effectiveUnit === 'bags' ? getUnitScale(materialId) : MT_SCALE}
+              unitLabel={effectiveUnit === 'bags' ? 'bags' : 'MT'}
+            />
+          ))}
+        </div>
       )}
 
       </>
