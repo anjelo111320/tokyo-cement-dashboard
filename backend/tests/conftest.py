@@ -21,10 +21,9 @@ from backend.db.base import Base
 import backend.db.models.user        # noqa: F401
 import backend.db.models.plant       # noqa: F401
 import backend.db.models.material    # noqa: F401
-import backend.db.models.app_setting # noqa: F401
+import backend.db.models.brand_group # noqa: F401
 import backend.db.models.material_threshold  # noqa: F401
 import backend.db.models.sharepoint_config   # noqa: F401
-import backend.db.models.ingestion_log       # noqa: F401
 from backend.db.database import get_db
 from backend.auth.password import hash_password
 
@@ -40,6 +39,16 @@ def async_session_factory(db_path):
     # app traffic via the async aiosqlite engine.
     sync_engine = create_engine(f"sqlite:///{db_path}")
     Base.metadata.create_all(sync_engine)
+
+    # Mirrors the seed data the real Alembic migration inserts in production.
+    from datetime import datetime, timezone
+    from backend.db.models.brand_group import BrandGroup
+    now = datetime.now(timezone.utc)
+    with sync_engine.begin() as conn:
+        conn.execute(BrandGroup.__table__.insert(), [
+            {"id": "sanstha", "label": "Sanstha", "sort_order": 0, "created_at": now},
+            {"id": "extra", "label": "Extra", "sort_order": 1, "created_at": now},
+        ])
     sync_engine.dispose()
 
     async_engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")

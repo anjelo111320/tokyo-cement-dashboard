@@ -112,35 +112,110 @@ def test_inactive_plant_hidden_from_dashboard(admin_client):
 
 # ── Threshold persistence (the "data keeps resetting" fix) ────────────────────
 
-def test_threshold_write_through_to_db(admin_client):
+def test_threshold_write_through_to_db(admin_client, async_session_factory):
+    import anyio
     from backend.core.material_ledger_config import MATERIAL_THRESHOLDS
+    from backend.repositories.db import threshold_repo
 
-    # Set via the Settings-page endpoint
+    async def _db_thresholds():
+        async with async_session_factory() as db:
+            return await threshold_repo.as_dict(db)
+
+    # Set via the Settings-page endpoint (the only surface left that writes thresholds
+    # now that the admin panel's Thresholds tab + /admin/thresholds are removed)
     res = admin_client.post("/api/v1/settings/thresholds",
                             json={"material_id": "80300000008", "min_stock_mt": 42.5})
     assert res.status_code == 200
 
     # In-memory cache updated (drives CSV alert calculations)
     assert MATERIAL_THRESHOLDS.get("80300000008") == 42.5
-
-    # Persisted to DB (visible through the admin DB-backed endpoint)
-    rows = {t["material_id"]: t["threshold_mt"]
-            for t in admin_client.get("/api/v1/admin/thresholds").json()["data"]}
-    assert rows.get("80300000008") == 42.5
+    # Persisted to DB (survives restarts — the "data keeps resetting" fix)
+    assert anyio.run(_db_thresholds).get("80300000008") == 42.5
 
     # Clearing (0) removes from both stores
     res = admin_client.post("/api/v1/settings/thresholds",
                             json={"material_id": "80300000008", "min_stock_mt": 0})
     assert res.status_code == 200
     assert "80300000008" not in MATERIAL_THRESHOLDS
-    rows = {t["material_id"] for t in admin_client.get("/api/v1/admin/thresholds").json()["data"]}
-    assert "80300000008" not in rows
+    assert "80300000008" not in anyio.run(_db_thresholds)
 
 
 def test_threshold_set_requires_admin(client):
     res = _without_cookies(client, "post", "/api/v1/settings/thresholds",
                            json={"material_id": "X", "min_stock_mt": 1})
     assert res.status_code == 401
+
+
+# ── Brand groups + admin sort order ────────────────────────────────────────────
+
+def test_brand_groups_list_seeded(admin_client):
+    res = admin_client.get("/api/v1/admin/brand-groups")
+    assert res.status_code == 200
+    groups = res.json()["data"]
+    ids = [g["id"] for g in groups]
+    assert "sanstha" in ids and "extra" in ids
+    orders = [g["sort_order"] for g in groups]
+    assert orders == sorted(orders)
+
+
+def test_brand_group_create_requires_admin(client):
+    res = _without_cookies(client, "post", "/api/v1/admin/brand-groups", json={"label": "Nope"})
+    assert res.status_code == 401
+
+
+def test_brand_group_create_slugify_and_dedupe(admin_client):
+    res = admin_client.post("/api/v1/admin/brand-groups", json={"label": "Holcim Cement"})
+    assert res.status_code == 201
+    body = res.json()["data"]
+    assert body["id"] == "holcim_cement"
+    assert body["label"] == "Holcim Cement"
+
+    # Newly created group is immediately usable on a material
+    res = admin_client.post("/api/v1/admin/materials", json={
+        "material_id": "SMOKE-BRAND-1", "description": "Smoke Brand Material",
+        "brand_group": "holcim_cement",
+    })
+    assert res.status_code == 201
+
+    # Same label again -> same slug -> conflict
+    res = admin_client.post("/api/v1/admin/brand-groups", json={"label": "Holcim Cement"})
+    assert res.status_code == 409
+
+
+def test_material_rejects_unknown_brand_group(admin_client):
+    res = admin_client.post("/api/v1/admin/materials", json={
+        "material_id": "SMOKE-BRAND-2", "description": "Bad Brand Material",
+        "brand_group": "does_not_exist",
+    })
+    assert res.status_code == 400
+
+
+def test_location_summary_reflects_db_brand_groups(client):
+    # holcim_cement was created by an admin above — the report must pick it up
+    # without any code change, since it now reads brand_groups from the DB.
+    res = client.get("/api/v1/material-ledger/location-summary")
+    assert res.status_code == 200
+    ids = [b["id"] for b in res.json()["data"]["brand_groups"]]
+    assert "sanstha" in ids
+    assert "holcim_cement" in ids
+
+
+def test_materials_sorted_grouped_before_ungrouped(admin_client):
+    res = admin_client.post("/api/v1/admin/materials", json={
+        "material_id": "SMOKE-UNGROUPED-1", "description": "AAA Ungrouped Material",
+    })
+    assert res.status_code == 201
+
+    ids_in_order = [m["material_id"] for m in admin_client.get("/api/v1/admin/materials").json()["data"]]
+    assert ids_in_order.index("SMOKE-BRAND-1") < ids_in_order.index("SMOKE-UNGROUPED-1")
+
+
+def test_plants_sorted_by_type_group(admin_client):
+    admin_client.post("/api/v1/admin/plants", json={"plant_id": "8001", "name": "ZZZ Depot", "plant_type": "depot"})
+    admin_client.post("/api/v1/admin/plants", json={"plant_id": "8002", "name": "AAA Factory", "plant_type": "factory"})
+
+    ids_in_order = [p["plant_id"] for p in admin_client.get("/api/v1/admin/plants").json()["data"]]
+    assert ids_in_order.index("8002") < ids_in_order.index("8001")
 
 
 # ── CSV validation ────────────────────────────────────────────────────────────
