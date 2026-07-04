@@ -8,8 +8,10 @@ import { MultiMaterialPicker } from '@/features/home/components/MultiMaterialPic
 import { useSettingsStore, convertQty, type UnitScale, type DisplayUnit } from '@/hooks/useSettingsStore';
 import type { MaterialReportCard, PlantReportRow } from '@/types/material_ledger.types';
 import { LocationSummaryView } from './components/LocationSummaryView';
+import { MaterialPlantGridView } from './components/MaterialPlantGridView';
 
 type ReportView = 'material' | 'location';
+type MaterialSubView = 'by_material' | 'by_plant';
 
 const MT_SCALE: UnitScale = { unit: 'MT', bagsPerMt: 1 };
 
@@ -22,6 +24,10 @@ function fmtQty(mt: number, scale: UnitScale): string {
 
 function isAllZero(row: PlantReportRow) {
   return row.on_hand_mt === 0 && row.transit_out_mt === 0 && row.transit_in_mt === 0;
+}
+
+function isMaterialInactive(card: MaterialReportCard) {
+  return card.plants.every(isAllZero);
 }
 
 // ── Column header config ──────────────────────────────────────────────────────
@@ -184,10 +190,12 @@ function MaterialCard({ card, hideZeros, unitScale }: {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export function ReportPage() {
-  const [reportView,        setReportView]        = useState<ReportView>('material');
-  const [selectedMaterials, setSelectedMaterials] = useState<string[]>([]);
-  const [hideZeros,         setHideZeros]         = useState(true);
-  const [unitOverride,      setUnitOverride]      = useState<DisplayUnit | null>(null);
+  const [reportView,          setReportView]          = useState<ReportView>('material');
+  const [materialSubView,     setMaterialSubView]     = useState<MaterialSubView>('by_material');
+  const [selectedMaterials,   setSelectedMaterials]   = useState<string[]>([]);
+  const [hideZeros,           setHideZeros]           = useState(true);
+  const [hideInactiveMaterials, setHideInactiveMaterials] = useState(true);
+  const [unitOverride,        setUnitOverride]        = useState<DisplayUnit | null>(null);
 
   const { data: report,    isLoading: reportLoading } = useInventoryReport();
   const { data: materials, isLoading: matsLoading   } = useLedgerMaterials();
@@ -203,9 +211,15 @@ export function ReportPage() {
 
   const filteredCards = useMemo(() => {
     if (!report) return [];
-    if (selectedMaterials.length === 0) return report.materials;
-    return report.materials.filter(card => selectedMaterials.includes(card.material_id));
-  }, [report, selectedMaterials]);
+    let cards = report.materials;
+    if (selectedMaterials.length > 0) {
+      cards = cards.filter(card => selectedMaterials.includes(card.material_id));
+    }
+    if (hideInactiveMaterials) {
+      cards = cards.filter(card => !isMaterialInactive(card));
+    }
+    return cards;
+  }, [report, selectedMaterials, hideInactiveMaterials]);
 
   const isLoading = reportLoading || matsLoading;
 
@@ -221,7 +235,7 @@ export function ReportPage() {
       />
 
       {/* ── View toggle ───────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-2 mb-4">
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
         <div className="flex bg-gray-100 rounded-xl p-1 gap-1 shrink-0">
           {([
             { key: 'material', label: 'Material View'     },
@@ -241,6 +255,28 @@ export function ReportPage() {
             </button>
           ))}
         </div>
+
+        {reportView === 'material' && (
+          <div className="flex bg-gray-50 rounded-lg p-0.5 gap-0.5 border border-gray-200 shrink-0">
+            {([
+              { key: 'by_material', label: 'By Material — plants as rows'  },
+              { key: 'by_plant',     label: 'By Plant — materials as rows' },
+            ] as { key: MaterialSubView; label: string }[]).map(({ key, label }) => (
+              <button
+                key={key}
+                onClick={() => setMaterialSubView(key)}
+                className={cn(
+                  'px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all duration-150 whitespace-nowrap',
+                  materialSubView === key
+                    ? 'bg-white text-[#1D4E6B] shadow-sm'
+                    : 'text-gray-400 hover:text-gray-600',
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* ── Location Summary view ─────────────────────────────────────────── */}
@@ -294,20 +330,39 @@ export function ReportPage() {
             )}
           </div>
 
-          {/* Hide zeros toggle */}
-          <button
-            onClick={() => setHideZeros(v => !v)}
-            className={cn(
-              'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all whitespace-nowrap',
-              hideZeros
-                ? 'bg-[#1B3550] text-white border-[#1B3550]'
-                : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200',
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            {/* Hide inactive materials toggle — whole material has zero activity across every plant */}
+            <button
+              onClick={() => setHideInactiveMaterials(v => !v)}
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all whitespace-nowrap',
+                hideInactiveMaterials
+                  ? 'bg-[#1B3550] text-white border-[#1B3550]'
+                  : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200',
+              )}
+            >
+              <Filter size={11} />
+              <span className="hidden sm:inline">{hideInactiveMaterials ? 'Hiding inactive materials' : 'Show inactive materials'}</span>
+              <span className="sm:hidden">{hideInactiveMaterials ? 'Hide inactive ✓' : 'Hide inactive'}</span>
+            </button>
+
+            {/* Hide zero rows toggle — only meaningful in the By Material (plants-as-rows) layout */}
+            {materialSubView === 'by_material' && (
+              <button
+                onClick={() => setHideZeros(v => !v)}
+                className={cn(
+                  'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all whitespace-nowrap',
+                  hideZeros
+                    ? 'bg-[#1B3550] text-white border-[#1B3550]'
+                    : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200',
+                )}
+              >
+                <Filter size={11} />
+                <span className="hidden sm:inline">{hideZeros ? 'Hiding zero rows' : 'Show active rows only'}</span>
+                <span className="sm:hidden">{hideZeros ? 'Hide zeros ✓' : 'Hide zeros'}</span>
+              </button>
             )}
-          >
-            <Filter size={11} />
-            <span className="hidden sm:inline">{hideZeros ? 'Hiding zero rows' : 'Show active rows only'}</span>
-            <span className="sm:hidden">{hideZeros ? 'Hide zeros ✓' : 'Hide zeros'}</span>
-          </button>
+          </div>
         </div>
       </div>
 
@@ -348,7 +403,7 @@ export function ReportPage() {
         <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
           <p className="text-sm text-gray-500">No materials match your filters</p>
         </div>
-      ) : (
+      ) : materialSubView === 'by_material' ? (
         <div className="space-y-4">
           {filteredCards.map(card => (
             <MaterialCard
@@ -359,6 +414,13 @@ export function ReportPage() {
             />
           ))}
         </div>
+      ) : (
+        <MaterialPlantGridView
+          cards={filteredCards}
+          getUnitScale={getUnitScale}
+          effectiveUnit={effectiveUnit}
+          unitScaleMT={MT_SCALE}
+        />
       )}
 
       </>

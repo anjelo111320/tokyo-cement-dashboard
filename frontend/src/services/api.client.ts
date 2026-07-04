@@ -21,9 +21,13 @@ apiClient.interceptors.response.use(
   async (error) => {
     if (axios.isAxiosError(error)) {
       // On 401: try refresh once, then redirect to login.
-      // Skip for auth endpoints — /auth/me and /auth/refresh handle their own 401s.
-      const isAuthEndpoint = error.config?.url?.includes('/auth/');
-      if (error.response?.status === 401 && !error.config?._retry && !isAuthEndpoint) {
+      // Skip only /auth/login (no session yet) and /auth/refresh (would retry itself
+      // forever). /auth/me MUST go through the refresh-and-retry path below — it's
+      // the call that restores a session after the short-lived access token expires,
+      // and skipping it here was silently discarding valid 7-day refresh sessions.
+      const url = error.config?.url ?? '';
+      const skipRefresh = url.includes('/auth/login') || url.includes('/auth/refresh');
+      if (error.response?.status === 401 && !error.config?._retry && !skipRefresh) {
         if (error.config) {
           error.config._retry = true;
         }

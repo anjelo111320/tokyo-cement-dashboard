@@ -31,9 +31,7 @@ export function LoginPage() {
       <div className="w-full max-w-sm">
         {/* Logo / branding */}
         <div className="mb-8 text-center">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-[#E05540] mb-4">
-            <span className="text-white text-2xl font-black">TC</span>
-          </div>
+          <img src="/insee-logo.png" alt="INSEE" className="h-12 w-auto mx-auto mb-4" />
           <h1 className="text-white text-xl font-bold">Finished Goods Inventory Hub</h1>
           <p className="text-slate-400 text-sm mt-1">Sign in to continue</p>
         </div>
