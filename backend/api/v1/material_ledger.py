@@ -11,6 +11,7 @@ Endpoints:
   GET /api/v1/material-ledger/materials          → distinct materials (filter dropdown)
   GET /api/v1/material-ledger/plants             → all plants with GPS coords
   GET /api/v1/material-ledger/location-summary   → brand × location grid
+  GET /api/v1/material-ledger/brand-groups       → admin-managed brand groups (public read)
 """
 
 from typing import Optional
@@ -26,7 +27,7 @@ from backend.schemas.common import ApiResponse
 from backend.schemas.material_ledger import (
     LedgerKpiSchema, MaterialSchema, PlantSchema,
     StockTransferSchema, InventorySummarySchema, InventoryAlertsSchema,
-    InventoryReportSchema, LocationSummarySchema,
+    InventoryReportSchema, LocationSummarySchema, BrandGroupOptionSchema,
 )
 from backend.services.material_ledger_service import MaterialLedgerService
 
@@ -72,19 +73,33 @@ def _material_override(m: "MaterialSchema", mat_map: dict) -> "MaterialSchema":
     db_m = mat_map.get(m.material_id)
     if not db_m:
         return m
-    return m.model_copy(update={"material_description": db_m.description})
+    return m.model_copy(update={"material_description": db_m.description, "brand_group": db_m.brand_group})
 
 
 def _plant_schema_override(p: "PlantSchema", plant_map: dict) -> "PlantSchema":
     db_p = plant_map.get(p.plant_id)
     if not db_p:
         return p
-    updates: dict = {"name": db_p.name, "city": db_p.city}
+    updates: dict = {"name": db_p.name, "city": db_p.city, "plant_type": db_p.plant_type}
     if db_p.lat is not None:
         updates["latitude"] = float(db_p.lat)
     if db_p.lng is not None:
         updates["longitude"] = float(db_p.lng)
     return p.model_copy(update=updates)
+
+
+def _transfer_row_override(row: "StockTransferRow", plant_map: dict, mat_map: dict) -> "StockTransferRow":
+    updates: dict = {}
+    db_src = plant_map.get(row.source_plant_id)
+    if db_src:
+        updates["source_plant_name"] = db_src.name
+    db_dst = plant_map.get(row.dest_plant_id)
+    if db_dst:
+        updates["dest_plant_name"] = db_dst.name
+    db_m = mat_map.get(row.material_id)
+    if db_m:
+        updates["material_description"] = db_m.description
+    return row.model_copy(update=updates) if updates else row
 
 
 @router.get("/kpis", response_model=ApiResponse[LedgerKpiSchema])
@@ -159,9 +174,25 @@ async def get_inventory_alerts(
 async def get_stock_transfers(
     plant_id: Optional[str] = Query(None),
     material_id: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
 ):
     """Inter-plant stock transfer notes parsed from VM+VN movement rows."""
-    return ApiResponse(data=_svc.get_stock_transfers(plant_id=plant_id, material_id=material_id))
+    plant_map, mat_map = await _load_db_maps(db)
+    inactive_pids = {pid for pid, p in plant_map.items() if not p.is_active}
+    inactive_mids = {mid for mid, m in mat_map.items() if not m.is_active}
+
+    result = _svc.get_stock_transfers(plant_id=plant_id, material_id=material_id)
+
+    transfers = [
+        _transfer_row_override(t, plant_map, mat_map)
+        for t in result.transfers
+        if t.source_plant_id not in inactive_pids
+        and t.dest_plant_id not in inactive_pids
+        and t.material_id not in inactive_mids
+    ]
+    result = StockTransferSchema(transfers=transfers, unit=result.unit)
+
+    return ApiResponse(data=result)
 
 
 @router.get("/inventory-report", response_model=ApiResponse[InventoryReportSchema])
@@ -243,6 +274,18 @@ async def get_materials(
     ]
 
     return ApiResponse(data=all_mats)
+
+
+@router.get("/brand-groups", response_model=ApiResponse[list[BrandGroupOptionSchema]])
+async def get_brand_groups(db: AsyncSession = Depends(get_db)):
+    """Admin-managed brand groups for dashboard filter dropdowns and the
+    Settings thresholds page. Mirrors /admin/brand-groups (same table) but
+    lives in this public, non-admin namespace since regular viewers need it too."""
+    result = await db.execute(sa_select(BrandGroup).order_by(BrandGroup.sort_order))
+    groups = result.scalars().all()
+    return ApiResponse(data=[
+        BrandGroupOptionSchema(id=g.id, label=g.label, sort_order=g.sort_order) for g in groups
+    ])
 
 
 @router.get("/plants", response_model=ApiResponse[list[PlantSchema]])

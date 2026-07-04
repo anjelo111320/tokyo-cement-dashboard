@@ -47,8 +47,17 @@ class StockTransferSchema(BaseModel):
 class MaterialSchema(BaseModel):
     material_id:          str
     material_description: str
+    brand_group:          Optional[str] = None  # admin-assigned, from Material.brand_group
     closing_stock_mt:     float = 0.0
     ever_stocked:         bool  = False  # True if plant has ever had AB or ZU > 0 for this material
+
+
+class BrandGroupOptionSchema(BaseModel):
+    """Public-facing brand group option — no has_data flag (that's Location
+    Summary-specific). Used by filter dropdowns and the Settings thresholds page."""
+    id:         str
+    label:      str
+    sort_order: int
 
 
 class PlantSchema(BaseModel):
@@ -59,6 +68,7 @@ class PlantSchema(BaseModel):
     country:         Optional[str] = None
     postal_code:     Optional[str] = None
     customer_number: Optional[str] = None
+    plant_type:      str = "depot"  # admin-assigned, from Plant.plant_type
     latitude:        Optional[float] = None
     longitude:       Optional[float] = None
     has_ledger_data: bool = False
