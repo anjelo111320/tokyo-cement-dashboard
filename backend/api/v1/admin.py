@@ -1,15 +1,28 @@
+import re
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.auth.dependencies import require_admin, get_current_user
 from backend.db.database import get_db
 from backend.db.models.user import User
-from backend.repositories.db import user_repo, plant_repo, settings_repo, threshold_repo
+from backend.db.models.brand_group import BrandGroup
+from backend.repositories.db import user_repo, plant_repo, settings_repo
 from backend.auth.password import hash_password
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+# Canonical display order for plant groups — "sort by group" means this order,
+# then alphabetical by name within each group. Any unexpected value sorts last.
+_PLANT_TYPE_ORDER = {"factory": 0, "terminal": 1, "hq": 2, "depot": 3}
+
+
+def _slugify(label: str) -> str:
+    """'Holcim Cement' -> 'holcim_cement'. Used to derive a brand_group id from its label."""
+    slug = re.sub(r'[^a-z0-9]+', '_', label.strip().lower()).strip('_')
+    return slug or "group"
 
 
 # ── Plants ────────────────────────────────────────────────────────────────────
@@ -38,6 +51,7 @@ class PlantUpdate(BaseModel):
 @router.get("/plants")
 async def list_plants(db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
     plants = await plant_repo.get_all(db)
+    plants = sorted(plants, key=lambda p: (_PLANT_TYPE_ORDER.get(p.plant_type, 99), p.name))
     return {"success": True, "data": [
         {"plant_id": p.plant_id, "name": p.name, "city": p.city, "lat": float(p.lat) if p.lat else None,
          "lng": float(p.lng) if p.lng else None, "plant_type": p.plant_type, "is_active": p.is_active}
@@ -79,7 +93,14 @@ async def delete_plant(plant_id: str, db: AsyncSession = Depends(get_db), _: Use
 # ── Materials ─────────────────────────────────────────────────────────────────
 
 from backend.db.models.material import Material  # noqa: E402
-from sqlalchemy import select  # noqa: E402
+
+
+async def _validate_brand_group(db: AsyncSession, brand_group: Optional[str]) -> None:
+    if brand_group is None:
+        return
+    exists = await db.execute(select(BrandGroup).where(BrandGroup.id == brand_group))
+    if not exists.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail=f"Unknown brand group: {brand_group}")
 
 
 class MaterialCreate(BaseModel):
@@ -103,6 +124,16 @@ class MaterialUpdate(BaseModel):
 async def list_materials(db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
     result = await db.execute(select(Material).order_by(Material.material_id))
     mats = result.scalars().all()
+
+    label_result = await db.execute(select(BrandGroup.id, BrandGroup.label))
+    labels = dict(label_result.all())
+    # Group first (by label A-Z), unassigned last, then description A-Z within group.
+    mats = sorted(mats, key=lambda m: (
+        m.brand_group is None,
+        labels.get(m.brand_group, ""),
+        m.description,
+    ))
+
     return {"success": True, "data": [
         {"material_id": m.material_id, "description": m.description,
          "brand_group": m.brand_group, "is_bag": m.is_bag, "is_bulk": m.is_bulk, "is_active": m.is_active}
@@ -115,6 +146,7 @@ async def create_material(body: MaterialCreate, db: AsyncSession = Depends(get_d
     existing = await db.execute(select(Material).where(Material.material_id == body.material_id))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Material ID already exists")
+    await _validate_brand_group(db, body.brand_group)
     mat = Material(**body.model_dump())
     db.add(mat)
     await db.commit()
@@ -127,7 +159,10 @@ async def update_material(material_id: str, body: MaterialUpdate, db: AsyncSessi
     mat = result.scalar_one_or_none()
     if not mat:
         raise HTTPException(status_code=404, detail="Material not found")
-    for k, v in body.model_dump(exclude_unset=True).items():
+    updates = body.model_dump(exclude_unset=True)
+    if "brand_group" in updates:
+        await _validate_brand_group(db, updates["brand_group"])
+    for k, v in updates.items():
         setattr(mat, k, v)
     await db.commit()
     return {"success": True}
@@ -180,62 +215,38 @@ async def sync_materials(db: AsyncSession = Depends(get_db), _: User = Depends(r
     return {"success": True, "data": {"imported": count}}
 
 
-# ── App settings ──────────────────────────────────────────────────────────────
+# ── Brand groups ──────────────────────────────────────────────────────────────
+# Source of truth for the Materials tab's brand-group dropdown and for the
+# Location Summary report's brand columns (see material_ledger.py). Anyone
+# logged in can list them; only admins can add new ones.
 
-class SettingUpdate(BaseModel):
-    value: str
+class BrandGroupCreate(BaseModel):
+    label: str
 
 
-@router.get("/settings")
-async def get_settings(db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
-    rows = await settings_repo.get_all_settings(db)
+@router.get("/brand-groups")
+async def list_brand_groups(db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
+    result = await db.execute(select(BrandGroup).order_by(BrandGroup.sort_order))
+    groups = result.scalars().all()
     return {"success": True, "data": [
-        {"key": r.key, "value": r.value, "value_type": r.value_type, "description": r.description}
-        for r in rows
+        {"id": g.id, "label": g.label, "sort_order": g.sort_order} for g in groups
     ]}
 
 
-@router.put("/settings/{key}")
-async def update_setting(key: str, body: SettingUpdate, db: AsyncSession = Depends(get_db), user: User = Depends(require_admin)):
-    await settings_repo.set_setting(db, key, body.value, updated_by=user.id)
-    return {"success": True}
-
-
-# ── Thresholds ────────────────────────────────────────────────────────────────
-
-class ThresholdUpsert(BaseModel):
-    threshold_mt: float
-
-
-@router.get("/thresholds")
-async def get_thresholds(db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
-    rows = await threshold_repo.get_all(db)
-    return {"success": True, "data": [
-        {"material_id": r.material_id, "threshold_mt": float(r.threshold_mt)}
-        for r in rows
-    ]}
-
-
-@router.put("/thresholds/{material_id}")
-async def upsert_threshold(material_id: str, body: ThresholdUpsert, db: AsyncSession = Depends(get_db), user: User = Depends(require_admin)):
-    await threshold_repo.upsert(db, material_id, body.threshold_mt, updated_by=user.id)
-    # Keep the in-memory cache (used by the sync CSV alert service) in step.
-    from backend.core.material_ledger_config import MATERIAL_THRESHOLDS  # noqa: PLC0415
-    if body.threshold_mt <= 0:
-        MATERIAL_THRESHOLDS.pop(material_id, None)
-    else:
-        MATERIAL_THRESHOLDS[material_id] = body.threshold_mt
-    return {"success": True}
-
-
-@router.delete("/thresholds/{material_id}")
-async def delete_threshold(material_id: str, db: AsyncSession = Depends(get_db), _: User = Depends(require_admin)):
-    deleted = await threshold_repo.delete(db, material_id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Threshold not found")
-    from backend.core.material_ledger_config import MATERIAL_THRESHOLDS  # noqa: PLC0415
-    MATERIAL_THRESHOLDS.pop(material_id, None)
-    return {"success": True}
+@router.post("/brand-groups", status_code=status.HTTP_201_CREATED)
+async def create_brand_group(body: BrandGroupCreate, db: AsyncSession = Depends(get_db), _: User = Depends(require_admin)):
+    label = body.label.strip()
+    if not label:
+        raise HTTPException(status_code=400, detail="Label is required")
+    slug = _slugify(label)
+    existing = (await db.execute(select(BrandGroup).where(BrandGroup.id == slug))).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=409, detail=f"Brand group '{slug}' already exists")
+    max_order = (await db.execute(select(BrandGroup.sort_order).order_by(BrandGroup.sort_order.desc()).limit(1))).scalar_one_or_none()
+    group = BrandGroup(id=slug, label=label, sort_order=(max_order or 0) + 1)
+    db.add(group)
+    await db.commit()
+    return {"success": True, "data": {"id": group.id, "label": group.label, "sort_order": group.sort_order}}
 
 
 # ── Users ─────────────────────────────────────────────────────────────────────
@@ -327,16 +338,3 @@ async def test_sharepoint(db: AsyncSession = Depends(get_db), _: User = Depends(
         return {"success": True, "data": {"message": "Connection successful"}}
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
-
-
-# ── Ingestion log ─────────────────────────────────────────────────────────────
-
-@router.get("/ingestion-log")
-async def get_ingestion_log(db: AsyncSession = Depends(get_db), _: User = Depends(require_admin)):
-    logs = await settings_repo.get_recent_logs(db)
-    return {"success": True, "data": [
-        {"id": str(l.id), "source": l.source, "file_name": l.file_name,
-         "status": l.status, "rows_loaded": l.rows_loaded,
-         "error_msg": l.error_msg, "created_at": l.created_at.isoformat()}
-        for l in logs
-    ]}

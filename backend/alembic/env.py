@@ -18,10 +18,9 @@ from backend.db.base import Base
 import backend.db.models.user            # noqa: F401
 import backend.db.models.plant           # noqa: F401
 import backend.db.models.material        # noqa: F401
-import backend.db.models.app_setting     # noqa: F401
+import backend.db.models.brand_group     # noqa: F401
 import backend.db.models.material_threshold  # noqa: F401
 import backend.db.models.sharepoint_config  # noqa: F401
-import backend.db.models.ingestion_log   # noqa: F401
 
 config = context.config
 

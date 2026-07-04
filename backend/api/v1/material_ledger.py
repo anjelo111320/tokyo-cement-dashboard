@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.db.database import get_db
 from backend.db.models.plant import Plant as PlantModel
 from backend.db.models.material import Material as MaterialModel
+from backend.db.models.brand_group import BrandGroup
 from backend.schemas.common import ApiResponse
 from backend.schemas.material_ledger import (
     LedgerKpiSchema, MaterialSchema, PlantSchema,
@@ -204,9 +205,18 @@ async def get_inventory_report(
 async def get_location_summary(
     include_bags: bool = Query(True,  description="Include 50 kg bag materials"),
     include_bulk: bool = Query(False, description="Include bulk materials"),
+    db: AsyncSession = Depends(get_db),
 ):
     """Brand × location grid: floor stock, period dispatch, and (if CSV has date column) inventory days."""
+    bg_result = await db.execute(sa_select(BrandGroup).order_by(BrandGroup.sort_order))
+    brand_groups = [{"id": b.id, "label": b.label} for b in bg_result.scalars().all()]
+
+    _, mat_map = await _load_db_maps(db)
+    material_brand_map = {mid: m.brand_group for mid, m in mat_map.items()}
+
     return ApiResponse(data=_svc.get_location_summary(
+        brand_groups=brand_groups,
+        material_brand_map=material_brand_map,
         include_bags=include_bags,
         include_bulk=include_bulk,
     ))

@@ -1,19 +1,16 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { adminService, type AdminPlant, type AdminMaterial, type SharePointConfig } from '@/services/admin.service';
+import { adminService, type AdminPlant, type AdminMaterial, type AdminBrandGroup, type SharePointConfig } from '@/services/admin.service';
 import { cn } from '@/utils/cn';
 import { Trash2, Plus, X, RotateCcw } from 'lucide-react';
 
-type Tab = 'plants' | 'materials' | 'thresholds' | 'settings' | 'sharepoint' | 'users' | 'logs';
+type Tab = 'plants' | 'materials' | 'sharepoint' | 'users';
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'plants',     label: 'Plants'      },
   { key: 'materials',  label: 'Materials'   },
-  { key: 'thresholds', label: 'Thresholds'  },
-  { key: 'settings',   label: 'Settings'    },
   { key: 'sharepoint', label: 'SharePoint'  },
   { key: 'users',      label: 'Users'       },
-  { key: 'logs',       label: 'Ingest Logs' },
 ];
 
 // ── Small reusable primitives ──────────────────────────────────────────────────
@@ -209,6 +206,80 @@ function PlantsTab() {
 
 const BLANK_MAT: AdminMaterial = { material_id: '', description: '', brand_group: null, is_bag: true, is_bulk: false, is_active: true };
 
+/** Brand group dropdown, fed by the admin-managed brand_groups table. Includes
+ * an inline "add new group" flow so a new group is usable immediately —
+ * it then shows up everywhere else that reads brand_groups (Location Summary
+ * report, this same dropdown for other materials). */
+function BrandGroupSelect({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string | null;
+  onChange: (val: string | null) => void;
+  disabled?: boolean;
+}) {
+  const qc = useQueryClient();
+  const { data: groups = [] } = useQuery({ queryKey: ['admin', 'brand-groups'], queryFn: adminService.getBrandGroups });
+  const [adding, setAdding] = useState(false);
+  const [newLabel, setNewLabel] = useState('');
+
+  const createMut = useMutation({
+    mutationFn: (label: string) => adminService.createBrandGroup(label),
+    onSuccess: (group: AdminBrandGroup) => {
+      qc.invalidateQueries({ queryKey: ['admin', 'brand-groups'] });
+      onChange(group.id);
+      setAdding(false);
+      setNewLabel('');
+    },
+  });
+
+  if (adding) {
+    return (
+      <div className="flex items-center gap-1">
+        <input
+          autoFocus
+          className="border border-gray-200 rounded px-2 py-1 text-xs w-24 focus:outline-none focus:ring-1 focus:ring-[#1D4E6B]"
+          placeholder="New group"
+          value={newLabel}
+          onChange={ev => setNewLabel(ev.target.value)}
+          onKeyDown={ev => {
+            if (ev.key === 'Enter' && newLabel.trim()) createMut.mutate(newLabel.trim());
+            if (ev.key === 'Escape') setAdding(false);
+          }}
+        />
+        <button
+          onClick={() => newLabel.trim() && createMut.mutate(newLabel.trim())}
+          disabled={!newLabel.trim() || createMut.isPending}
+          className="text-[10px] font-bold text-green-600 hover:text-green-700 disabled:opacity-40"
+          title="Save new group"
+        >
+          {createMut.isPending ? '…' : 'Add'}
+        </button>
+        <button onClick={() => setAdding(false)} className="text-gray-300 hover:text-red-500" title="Cancel">
+          <X size={12} />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <select
+      className="border border-gray-200 rounded px-2 py-1 text-xs w-32 focus:outline-none focus:ring-1 focus:ring-[#1D4E6B] disabled:opacity-50"
+      value={value ?? ''}
+      disabled={disabled}
+      onChange={ev => {
+        if (ev.target.value === '__add__') { setAdding(true); return; }
+        onChange(ev.target.value || null);
+      }}
+    >
+      <option value="">— None —</option>
+      {groups.map(g => <option key={g.id} value={g.id}>{g.label}</option>)}
+      <option value="__add__">+ Add new group…</option>
+    </select>
+  );
+}
+
 function MaterialsTab() {
   const qc = useQueryClient();
   const { data: mats = [], isLoading } = useQuery({ queryKey: ['admin', 'materials'], queryFn: adminService.getMaterials });
@@ -274,9 +345,10 @@ function MaterialsTab() {
                     onChange={ev => setDraft(d => ({ ...d, description: ev.target.value }))} />
                 </td>
                 <td className="px-3 py-2">
-                  <input className="border border-gray-200 rounded px-2 py-1 text-xs w-28 focus:outline-none focus:ring-1 focus:ring-[#1D4E6B]"
-                    placeholder="Brand group" value={draft.brand_group ?? ''}
-                    onChange={ev => setDraft(d => ({ ...d, brand_group: ev.target.value || null }))} />
+                  <BrandGroupSelect
+                    value={draft.brand_group}
+                    onChange={val => setDraft(d => ({ ...d, brand_group: val }))}
+                  />
                 </td>
                 <td className="px-3 py-2 text-center">
                   <input type="checkbox" checked={draft.is_bag}
@@ -320,10 +392,11 @@ function MaterialsTab() {
                       onChange={ev => set('description', ev.target.value)} />
                   </td>
                   <td className="px-3 py-2">
-                    <input className="border border-gray-200 rounded px-2 py-1 text-xs w-28 focus:outline-none focus:ring-1 focus:ring-[#1D4E6B] disabled:opacity-50"
-                      value={(e.brand_group ?? m.brand_group) ?? ''}
+                    <BrandGroupSelect
+                      value={(e.brand_group ?? m.brand_group) ?? null}
                       disabled={hidden}
-                      onChange={ev => set('brand_group', ev.target.value || null)} />
+                      onChange={val => set('brand_group', val)}
+                    />
                   </td>
                   <td className="px-3 py-2 text-center">
                     <input type="checkbox" defaultChecked={m.is_bag} disabled={hidden}
@@ -374,95 +447,6 @@ function MaterialsTab() {
           </tbody>
         </table>
       </div>
-    </div>
-  );
-}
-
-// ── Thresholds tab ─────────────────────────────────────────────────────────────
-
-function ThresholdsTab() {
-  const qc = useQueryClient();
-  const { data: rows = [] } = useQuery({ queryKey: ['admin', 'thresholds'], queryFn: adminService.getThresholds });
-  const { data: mats = [] } = useQuery({ queryKey: ['admin', 'materials'], queryFn: adminService.getMaterials });
-  const [newId, setNewId] = useState('');
-  const [newVal, setNewVal] = useState('');
-  const upsertMut = useMutation({
-    mutationFn: ({ id, val }: { id: string; val: number }) => adminService.upsertThreshold(id, val),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'thresholds'] }),
-  });
-  const delMut = useMutation({
-    mutationFn: adminService.deleteThreshold,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'thresholds'] }),
-  });
-
-  const matMap = Object.fromEntries(mats.map(m => [m.material_id, m.description]));
-
-  return (
-    <div className="space-y-4 max-w-xl">
-      <div className="flex gap-2">
-        <input className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-[#1D4E6B]"
-          placeholder="Material ID" value={newId} onChange={e => setNewId(e.target.value)} />
-        <input className="w-28 border border-gray-200 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-[#1D4E6B]"
-          placeholder="Min MT" type="number" value={newVal} onChange={e => setNewVal(e.target.value)} />
-        <button onClick={() => { upsertMut.mutate({ id: newId, val: parseFloat(newVal) }); setNewId(''); setNewVal(''); }}
-          disabled={!newId || !newVal}
-          className="px-3 py-2 text-xs font-semibold rounded-lg bg-[#1D4E6B] text-white hover:bg-[#163a52] disabled:opacity-40 transition-colors">
-          Add
-        </button>
-      </div>
-      <div className="divide-y divide-gray-100 rounded-xl border border-gray-200 overflow-hidden">
-        {rows.map(r => (
-          <div key={r.material_id} className="flex items-center justify-between px-4 py-2.5 hover:bg-gray-50">
-            <div>
-              <span className="font-mono text-xs text-gray-500">{r.material_id}</span>
-              <span className="ml-2 text-xs text-gray-700">{matMap[r.material_id] ?? ''}</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <span className="text-xs font-semibold text-[#1D4E6B]">{r.threshold_mt} MT</span>
-              <button onClick={() => delMut.mutate(r.material_id)}
-                className="text-xs text-red-400 hover:text-red-600 transition-colors">Remove</button>
-            </div>
-          </div>
-        ))}
-        {rows.length === 0 && <p className="px-4 py-4 text-xs text-gray-400">No thresholds set.</p>}
-      </div>
-    </div>
-  );
-}
-
-// ── Settings tab ───────────────────────────────────────────────────────────────
-
-function SettingsTab() {
-  const qc = useQueryClient();
-  const { data: settings = [] } = useQuery({ queryKey: ['admin', 'settings'], queryFn: adminService.getSettings });
-  const [edits, setEdits] = useState<Record<string, string>>({});
-  const mut = useMutation({
-    mutationFn: ({ key, value }: { key: string; value: string }) => adminService.updateSetting(key, value),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'settings'] }),
-  });
-
-  return (
-    <div className="max-w-xl divide-y divide-gray-100 rounded-xl border border-gray-200 overflow-hidden">
-      {settings.map(s => (
-        <div key={s.key} className="px-4 py-3 hover:bg-gray-50">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex-1">
-              <p className="text-xs font-semibold text-gray-900">{s.key}</p>
-              {s.description && <p className="text-[10px] text-gray-400 mt-0.5">{s.description}</p>}
-            </div>
-            <div className="flex items-center gap-2">
-              <input
-                className="border border-gray-200 rounded-lg px-2 py-1 text-xs w-36 focus:outline-none focus:ring-1 focus:ring-[#1D4E6B]"
-                defaultValue={s.value}
-                onChange={ev => setEdits(prev => ({ ...prev, [s.key]: ev.target.value }))}
-              />
-              {edits[s.key] !== undefined && edits[s.key] !== s.value && (
-                <SaveBtn onClick={() => mut.mutate({ key: s.key, value: edits[s.key] })} loading={mut.isPending} />
-              )}
-            </div>
-          </div>
-        </div>
-      ))}
     </div>
   );
 }
@@ -584,48 +568,6 @@ function UsersTab() {
   );
 }
 
-// ── Logs tab ───────────────────────────────────────────────────────────────────
-
-function LogsTab() {
-  const { data: logs = [], isLoading } = useQuery({ queryKey: ['admin', 'logs'], queryFn: adminService.getLogs });
-
-  if (isLoading) return <p className="text-sm text-gray-400 py-8 text-center">Loading…</p>;
-
-  return (
-    <div className="overflow-x-auto rounded-xl border border-gray-200">
-      <table className="min-w-full text-xs">
-        <thead className="bg-[#0D1F2D] text-white">
-          <tr>
-            {['Time', 'Source', 'File', 'Status', 'Rows', 'Error'].map(h => (
-              <th key={h} className="px-3 py-2.5 text-left font-semibold uppercase tracking-widest text-[10px]">{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-100">
-          {logs.map(l => (
-            <tr key={l.id} className={cn('hover:bg-gray-50', l.status === 'error' ? 'bg-red-50' : '')}>
-              <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{new Date(l.created_at).toLocaleString()}</td>
-              <td className="px-3 py-2 font-semibold">{l.source}</td>
-              <td className="px-3 py-2 text-gray-500 max-w-xs truncate">{l.file_name ?? '—'}</td>
-              <td className="px-3 py-2">
-                <span className={cn('px-1.5 py-0.5 rounded text-[10px] font-bold',
-                  l.status === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600')}>
-                  {l.status}
-                </span>
-              </td>
-              <td className="px-3 py-2 text-gray-600">{l.rows_loaded ?? '—'}</td>
-              <td className="px-3 py-2 text-red-500 max-w-xs truncate">{l.error_msg ?? ''}</td>
-            </tr>
-          ))}
-          {logs.length === 0 && (
-            <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-400">No ingestion logs yet.</td></tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 // ── Main AdminPage ─────────────────────────────────────────────────────────────
 
 export function AdminPage() {
@@ -635,7 +577,7 @@ export function AdminPage() {
     <div className="p-6 space-y-6 max-w-6xl">
       <div>
         <h1 className="text-xl font-bold text-gray-900">Admin Panel</h1>
-        <p className="text-sm text-gray-500 mt-0.5">Manage plants, materials, settings, users, and integrations.</p>
+        <p className="text-sm text-gray-500 mt-0.5">Manage plants, materials, users, and integrations.</p>
       </div>
 
       {/* Tab bar */}
@@ -654,11 +596,8 @@ export function AdminPage() {
       {/* Tab content */}
       {tab === 'plants'     && <PlantsTab />}
       {tab === 'materials'  && <MaterialsTab />}
-      {tab === 'thresholds' && <ThresholdsTab />}
-      {tab === 'settings'   && <SettingsTab />}
       {tab === 'sharepoint' && <SharePointTab />}
       {tab === 'users'      && <UsersTab />}
-      {tab === 'logs'       && <LogsTab />}
     </div>
   );
 }

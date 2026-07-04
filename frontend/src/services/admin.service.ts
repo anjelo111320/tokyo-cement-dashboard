@@ -19,11 +19,10 @@ export interface AdminMaterial {
   is_active: boolean;
 }
 
-export interface AppSetting {
-  key: string;
-  value: string;
-  value_type: string;
-  description: string | null;
+export interface AdminBrandGroup {
+  id: string;
+  label: string;
+  sort_order: number;
 }
 
 export interface AdminUser {
@@ -31,16 +30,6 @@ export interface AdminUser {
   email: string;
   role: string;
   is_active: boolean;
-}
-
-export interface IngestionLog {
-  id: string;
-  source: string;
-  file_name: string | null;
-  status: string;
-  rows_loaded: number | null;
-  error_msg: string | null;
-  created_at: string;
 }
 
 export interface SharePointConfig {
@@ -70,14 +59,9 @@ export const adminService = {
   deleteMaterial:  (id: string) => apiClient.delete(`/admin/materials/${id}`),
   syncMaterials:   () => apiClient.post('/admin/materials/sync'),
 
-  // Settings
-  getSettings: () => apiClient.get<{ data: { data: AppSetting[] } }>('/admin/settings').then(wrap<AppSetting[]>),
-  updateSetting: (key: string, value: string) => apiClient.put(`/admin/settings/${key}`, { value }),
-
-  // Thresholds
-  getThresholds: () => apiClient.get<{ data: { data: { material_id: string; threshold_mt: number }[] } }>('/admin/thresholds').then(wrap<{ material_id: string; threshold_mt: number }[]>),
-  upsertThreshold: (material_id: string, threshold_mt: number) => apiClient.put(`/admin/thresholds/${material_id}`, { threshold_mt }),
-  deleteThreshold: (material_id: string) => apiClient.delete(`/admin/thresholds/${material_id}`),
+  // Brand groups
+  getBrandGroups:   () => apiClient.get<{ data: { data: AdminBrandGroup[] } }>('/admin/brand-groups').then(wrap<AdminBrandGroup[]>),
+  createBrandGroup: (label: string) => apiClient.post<{ data: { data: AdminBrandGroup } }>('/admin/brand-groups', { label }).then(wrap<AdminBrandGroup>),
 
   // Users
   getUsers: () => apiClient.get<{ data: { data: AdminUser[] } }>('/admin/users').then(wrap<AdminUser[]>),
@@ -88,7 +72,4 @@ export const adminService = {
   getSharePoint: () => apiClient.get<{ data: { data: SharePointConfig | null } }>('/admin/sharepoint').then(wrap<SharePointConfig | null>),
   updateSharePoint: (body: Partial<SharePointConfig>) => apiClient.put('/admin/sharepoint', body),
   testSharePoint: () => apiClient.post('/admin/sharepoint/test'),
-
-  // Logs
-  getLogs: () => apiClient.get<{ data: { data: IngestionLog[] } }>('/admin/ingestion-log').then(wrap<IngestionLog[]>),
 };

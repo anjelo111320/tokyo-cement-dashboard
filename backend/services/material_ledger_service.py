@@ -73,22 +73,12 @@ _LOCATION_GROUPS: list[dict] = [
     {"id": "ELC_Badulla",      "primary": "2119", "plant_ids": {"2119"}},
 ]
 
-# ── Brand group definitions ────────────────────────────────────────────────────
-_BRAND_GROUPS: list[dict] = [
-    {"id": "sanstha",          "label": "Sanstha"},
-    {"id": "mmc_plus",         "label": "MMC Plus"},
-    {"id": "marine_composite", "label": "Marine Composite"},
-    {"id": "mahamera",         "label": "Mahamera"},
-    {"id": "rapid_flow",       "label": "Rapid Flow"},
-    {"id": "extra",            "label": "Extra"},
-    {"id": "supiri",           "label": "Supiri"},
-    {"id": "ambuja",           "label": "Ambuja"},
-    {"id": "fiberbond",        "label": "Fiberbond"},
-]
-
 
 def _classify_brand(desc: str) -> Optional[str]:
-    """Map material description to a brand group id. Order matters: most specific first."""
+    """Best-effort default brand group for a newly-discovered material (CSV
+    auto-sync). The persisted, admin-editable Material.brand_group field is
+    the actual source of truth once a material exists — see admin.py and
+    get_location_summary(). Order matters: most specific first."""
     d = desc.lower()
     if "mahamera" in d:                                                               return "mahamera"
     if "marine" in d and ("v-l" in d or "s-l" in d or "marine plus_" in d):          return "marine_composite"
@@ -632,11 +622,22 @@ class MaterialLedgerService:
 
     def get_location_summary(
         self,
+        brand_groups: list[dict],
+        material_brand_map: dict[str, Optional[str]],
         include_bags: bool = True,
         include_bulk: bool = False,
     ) -> LocationSummarySchema:
         """
         Brand × Location aggregation grid.
+
+        brand_groups: DB-backed list of {"id", "label"} — the admin-managed
+        source of truth (see api/v1/admin.py brand-groups endpoints), replacing
+        the old hardcoded _BRAND_GROUPS list so admin-added groups appear here.
+        material_brand_map: material_id -> brand_group id, read from the DB
+        Material.brand_group field (admin-editable) instead of re-deriving it
+        from the description via _classify_brand() on every request — this way
+        an admin's manual brand_group edit in the Materials tab is reflected
+        here immediately.
 
         Stock    = CA/EB closing balance rows
         Dispatch = BV/VN Sales Order rows (period total)
@@ -686,7 +687,7 @@ class MaterialLedgerService:
         # ── Floor stock (CA/EB) ─────────────────────────────────────────────────
         for m in self._ledger.get_movements(obj_type="CA", category="EB"):
             loc_id   = plant_to_loc.get(m.plant_id)
-            brand_id = _classify_brand(m.material_description)
+            brand_id = material_brand_map.get(m.material_id)
             if not loc_id or not brand_id:
                 continue
             if not _should_include(m.material_description):
@@ -698,7 +699,7 @@ class MaterialLedgerService:
             if m.proc_cat_name != "Sales Order":
                 continue
             loc_id   = plant_to_loc.get(m.plant_id)
-            brand_id = _classify_brand(m.material_description)
+            brand_id = material_brand_map.get(m.material_id)
             if not loc_id or not brand_id:
                 continue
             if not _should_include(m.material_description):
@@ -710,7 +711,7 @@ class MaterialLedgerService:
             if m.proc_cat_name != "Stock Transfer":
                 continue
             loc_id   = plant_to_loc.get(m.plant_id)
-            brand_id = _classify_brand(m.material_description)
+            brand_id = material_brand_map.get(m.material_id)
             if not loc_id or not brand_id:
                 continue
             if not _should_include(m.material_description):
@@ -730,18 +731,18 @@ class MaterialLedgerService:
                 return None
             total_daily = sum(
                 daily_dispatch_map.get((loc_id, bid), 0.0)
-                for bid in [b["id"] for b in _BRAND_GROUPS]
+                for bid in [b["id"] for b in brand_groups]
             )
             if total_daily <= 0:
                 return None
             total_stock = sum(
                 stock_acc.get((loc_id, bid), 0.0)
-                for bid in [b["id"] for b in _BRAND_GROUPS]
+                for bid in [b["id"] for b in brand_groups]
             )
             return round(total_stock / total_daily, 1)
 
         # ── Assemble location rows ───────────────────────────────────────────────
-        brand_ids = [b["id"] for b in _BRAND_GROUPS]
+        brand_ids = [b["id"] for b in brand_groups]
         rows: list[LocationSummaryRow] = []
         brands_with_data: set[str] = set()
 
@@ -793,7 +794,7 @@ class MaterialLedgerService:
 
         brand_group_meta = [
             BrandGroupMetaSchema(id=b["id"], label=b["label"], has_data=b["id"] in brands_with_data)
-            for b in _BRAND_GROUPS
+            for b in brand_groups
         ]
 
         return LocationSummarySchema(
