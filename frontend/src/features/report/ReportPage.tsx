@@ -6,6 +6,7 @@ import { cn } from '@/utils/cn';
 import { useInventoryReport, useLedgerMaterials, useLedgerTransfers } from '@/features/material_ledger/hooks/useLedger';
 import { MultiMaterialPicker } from '@/features/home/components/MultiMaterialPicker';
 import { useSettingsStore, convertQty, type UnitScale, type DisplayUnit } from '@/hooks/useSettingsStore';
+import { useLocalStorage } from '@/hooks/useLocalStorage';
 import type { MaterialReportCard, PlantReportRow } from '@/types/material_ledger.types';
 import { LocationSummaryView } from './components/LocationSummaryView';
 
@@ -29,6 +30,24 @@ function isMaterialInactive(card: MaterialReportCard) {
   return card.plants.every(isAllZero);
 }
 
+// On-hand stock vs. the material's configured threshold (Settings → Thresholds).
+// A row with zero activity everywhere (never stocked here) stays neutral rather
+// than "out" — only rows with some transit/on-hand activity get flagged red,
+// mirroring the "everStocked" guard used for the same purpose on the Home page.
+type StockStatus = 'out' | 'low' | 'ok';
+
+function stockStatus(onHandMt: number, threshold: number, hasActivity: boolean): StockStatus {
+  if (onHandMt <= 0) return hasActivity ? 'out' : 'ok';
+  if (threshold > 0 && onHandMt < threshold) return 'low';
+  return 'ok';
+}
+
+const STOCK_STATUS_CLS: Record<StockStatus, string> = {
+  out: 'bg-red-50 text-red-600',
+  low: 'bg-amber-50 text-amber-700',
+  ok:  '',
+};
+
 // ── Column header config ──────────────────────────────────────────────────────
 
 const COLS = [
@@ -40,16 +59,18 @@ const COLS = [
 
 // ── Material card ─────────────────────────────────────────────────────────────
 
-function MaterialCard({ card, hideZeros, unitScale }: {
+function MaterialCard({ card, hideZeros, unitScale, getThreshold }: {
   card:      MaterialReportCard;
   hideZeros: boolean;
   unitScale: UnitScale;
+  getThreshold: (materialId: string) => number;
 }) {
   const [collapsed, setCollapsed] = useState(false);
 
   const rows        = hideZeros ? card.plants.filter(r => !isAllZero(r)) : card.plants;
   const activeCount = card.plants.filter(r => !isAllZero(r)).length;
   const unitLabel   = unitScale.unit === 'bags' ? 'bags' : 'MT';
+  const threshold   = getThreshold(card.material_id);
 
   const badgeOnHand  = convertQty(card.total_on_hand,   unitScale, unitScale.unit === 'bags' ? 0 : 1);
   const badgeTransIn = convertQty(card.total_transit_in, unitScale, unitScale.unit === 'bags' ? 0 : 1);
@@ -119,6 +140,7 @@ function MaterialCard({ card, hideZeros, unitScale }: {
               ) : (
                 rows.map(row => {
                   const hasActivity = !isAllZero(row);
+                  const status      = stockStatus(row.on_hand_mt, threshold, hasActivity);
                   return (
                     <tr
                       key={row.plant_id}
@@ -132,7 +154,10 @@ function MaterialCard({ card, hideZeros, unitScale }: {
                         <p className="text-gray-800 font-medium truncate max-w-40">{row.plant_name}</p>
                         {row.city && <p className="text-[10px] text-gray-400">{row.city}</p>}
                       </td>
-                      <td className={cn('px-4 py-2.5 text-right font-semibold tabular-nums', row.on_hand_mt > 0 ? 'text-[#1B3550]' : 'text-gray-300')}>
+                      <td className={cn(
+                        'px-4 py-2.5 text-right font-semibold tabular-nums',
+                        status !== 'ok' ? STOCK_STATUS_CLS[status] : row.on_hand_mt > 0 ? 'text-[#1B3550]' : 'text-gray-300',
+                      )}>
                         {fmtQty(row.on_hand_mt, unitScale)}
                       </td>
                       <td className={cn('px-4 py-2.5 text-right font-semibold tabular-nums', row.transit_out_mt > 0 ? 'text-amber-600' : 'text-gray-300')}>
@@ -211,11 +236,12 @@ function isPlantGroupInactive(group: PlantGroup) {
   return group.materials.every(m => isAllZero(m.row));
 }
 
-function PlantCard({ group, hideZeros, getRowScale, unitLabel }: {
+function PlantCard({ group, hideZeros, getRowScale, unitLabel, getThreshold }: {
   group:       PlantGroup;
   hideZeros:   boolean;
   getRowScale: (materialId: string) => UnitScale;
   unitLabel:   string;
+  getThreshold: (materialId: string) => number;
 }) {
   const [collapsed, setCollapsed] = useState(false);
 
@@ -297,6 +323,7 @@ function PlantCard({ group, hideZeros, getRowScale, unitLabel }: {
                   const row         = m.row;
                   const hasActivity = !isAllZero(row);
                   const scale       = getRowScale(m.material_id);
+                  const status      = stockStatus(row.on_hand_mt, getThreshold(m.material_id), hasActivity);
                   return (
                     <tr
                       key={m.material_id}
@@ -309,7 +336,10 @@ function PlantCard({ group, hideZeros, getRowScale, unitLabel }: {
                         <p className="text-gray-800 font-medium truncate max-w-56">{m.material_description}</p>
                         <p className="text-[10px] font-mono text-gray-400">{m.material_id}</p>
                       </td>
-                      <td className={cn('px-4 py-2.5 text-right font-semibold tabular-nums', row.on_hand_mt > 0 ? 'text-[#1B3550]' : 'text-gray-300')}>
+                      <td className={cn(
+                        'px-4 py-2.5 text-right font-semibold tabular-nums',
+                        status !== 'ok' ? STOCK_STATUS_CLS[status] : row.on_hand_mt > 0 ? 'text-[#1B3550]' : 'text-gray-300',
+                      )}>
                         {fmtQty(row.on_hand_mt, scale)}
                       </td>
                       <td className={cn('px-4 py-2.5 text-right font-semibold tabular-nums', row.transit_out_mt > 0 ? 'text-amber-600' : 'text-gray-300')}>
@@ -372,18 +402,18 @@ function PlantCard({ group, hideZeros, getRowScale, unitLabel }: {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export function ReportPage() {
-  const [reportView,            setReportView]            = useState<ReportView>('material');
-  const [materialSubView,       setMaterialSubView]       = useState<MaterialSubView>('by_material');
-  const [selectedMaterials,     setSelectedMaterials]     = useState<string[]>([]);
-  const [hideZeros,             setHideZeros]             = useState(true);
-  const [hideInactiveMaterials, setHideInactiveMaterials] = useState(true);
-  const [hideInactivePlants,    setHideInactivePlants]    = useState(true);
-  const [unitOverride,          setUnitOverride]          = useState<DisplayUnit | null>(null);
+  const [reportView,            setReportView]            = useLocalStorage<ReportView>('insee_dashboard_report_view', 'material');
+  const [materialSubView,       setMaterialSubView]       = useLocalStorage<MaterialSubView>('insee_dashboard_report_material_subview', 'by_material');
+  const [selectedMaterials,     setSelectedMaterials]     = useLocalStorage<string[]>('insee_dashboard_report_material_ids', []);
+  const [hideZeros,             setHideZeros]             = useLocalStorage<boolean>('insee_dashboard_report_hide_zeros', true);
+  const [hideInactiveMaterials, setHideInactiveMaterials] = useLocalStorage<boolean>('insee_dashboard_report_hide_inactive_materials', true);
+  const [hideInactivePlants,    setHideInactivePlants]    = useLocalStorage<boolean>('insee_dashboard_report_hide_inactive_plants', true);
+  const [unitOverride,          setUnitOverride]          = useLocalStorage<DisplayUnit | null>('insee_dashboard_report_unit_override', null);
 
   const { data: report,       isLoading: reportLoading } = useInventoryReport();
   const { data: materials,    isLoading: matsLoading   } = useLedgerMaterials();
   const { data: transferData } = useLedgerTransfers();
-  const { allUnitScales, getUnitScale } = useSettingsStore();
+  const { allUnitScales, getUnitScale, getThreshold } = useSettingsStore();
 
   // Derive what Settings has configured as the default unit
   const settingsUnit = useMemo<DisplayUnit>(() => {
@@ -582,7 +612,7 @@ export function ReportPage() {
           <div className="flex items-center gap-2 flex-wrap justify-end">
             {/* Hide inactive materials toggle — whole material has zero activity across every plant */}
             <button
-              onClick={() => setHideInactiveMaterials(v => !v)}
+              onClick={() => setHideInactiveMaterials(!hideInactiveMaterials)}
               className={cn(
                 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all whitespace-nowrap',
                 hideInactiveMaterials
@@ -598,7 +628,7 @@ export function ReportPage() {
             {/* Hide inactive plants toggle — only relevant in the By Plant (materials-as-rows) layout */}
             {materialSubView === 'by_plant' && (
               <button
-                onClick={() => setHideInactivePlants(v => !v)}
+                onClick={() => setHideInactivePlants(!hideInactivePlants)}
                 className={cn(
                   'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all whitespace-nowrap',
                   hideInactivePlants
@@ -616,7 +646,7 @@ export function ReportPage() {
                 entity the rows represent (plants inside a material card, or materials
                 inside a plant card) */}
             <button
-              onClick={() => setHideZeros(v => !v)}
+              onClick={() => setHideZeros(!hideZeros)}
               className={cn(
                 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all whitespace-nowrap',
                 hideZeros
@@ -652,6 +682,10 @@ export function ReportPage() {
           ))}
         </div>
         <p className="text-[10px] text-gray-400 mt-1.5">(negative values) = shown in parentheses</p>
+        <p className="text-[10px] text-gray-400 mt-1">
+          On Hand: <span className="text-amber-700 font-semibold">amber</span> = below threshold ·{' '}
+          <span className="text-red-600 font-semibold">red</span> = out of stock
+        </p>
       </div>
 
       {/* ── Cards ────────────────────────────────────────────────────────── */}
@@ -677,6 +711,7 @@ export function ReportPage() {
               card={card}
               hideZeros={hideZeros}
               unitScale={effectiveUnit === 'bags' ? getUnitScale(card.material_id) : MT_SCALE}
+              getThreshold={getThreshold}
             />
           ))}
         </div>
@@ -693,6 +728,7 @@ export function ReportPage() {
               hideZeros={hideZeros}
               getRowScale={materialId => effectiveUnit === 'bags' ? getUnitScale(materialId) : MT_SCALE}
               unitLabel={effectiveUnit === 'bags' ? 'bags' : 'MT'}
+              getThreshold={getThreshold}
             />
           ))}
         </div>
