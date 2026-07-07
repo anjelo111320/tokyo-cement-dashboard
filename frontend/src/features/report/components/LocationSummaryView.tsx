@@ -136,13 +136,17 @@ function exportPdf(
       head: [head],
       body,
       foot: [foot],
-      styles: { fontSize: 7 },
-      headStyles: { fillColor: [13, 31, 45], textColor: 255 },
+      styles: { fontSize: 7, halign: 'center' },
+      headStyles: { fillColor: [13, 31, 45], textColor: 255, halign: 'center' },
       // Total row — same eye-catching treatment as the Total column, bold white on navy.
-      footStyles: { fillColor: [13, 31, 45], textColor: 255, fontStyle: 'bold' },
-      // Total column — gray highlight running through every row, including head/foot,
-      // so it reads as one continuous "Total" column top to bottom.
+      footStyles: { fillColor: [13, 31, 45], textColor: 255, fontStyle: 'bold', halign: 'center' },
+      // Plant ID / Plant Name stay left-aligned (identifiers, not data values);
+      // every number column, including Total, is centered — see global `styles` above.
+      // Total column also gets a gray highlight running through every row, including
+      // head/foot, so it reads as one continuous "Total" column top to bottom.
       columnStyles: {
+        0: { halign: 'left' },
+        1: { halign: 'left' },
         [totalColIndex]: { fillColor: [243, 244, 246], textColor: [55, 65, 81], fontStyle: 'bold' },
       },
       didParseCell: (hookData) => {
@@ -229,10 +233,19 @@ function SummaryTable({
     <div className="flex flex-col gap-2">
       <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest px-1">{title}</h3>
       <div className="overflow-x-auto rounded-2xl border border-gray-200 shadow-sm">
-        <table className="min-w-full text-sm border-collapse">
+        <table className="min-w-full text-sm border-collapse table-fixed">
+          {/* Fixed, content-independent column widths — both this table and its
+              sibling (Floor Stock / Dispatch) share the same activeBrands list,
+              so identical widths here keep every column lined up vertically
+              between the two tables instead of each auto-sizing to its own data. */}
+          <colgroup>
+            <col className="w-24" />
+            {activeBrands.map(b => <col key={b.id} className="w-25" />)}
+            <col className="w-25" />
+          </colgroup>
           <thead className="bg-[#0D1F2D] text-white">
             <tr>
-              <th className="sticky left-0 z-10 bg-[#0D1F2D] px-3 py-3 text-left text-[11px] font-bold uppercase tracking-widest whitespace-nowrap w-24 border-r border-[#1B3550]">
+              <th className="sticky left-0 z-10 bg-[#0D1F2D] px-3 py-3 text-left text-[11px] font-bold uppercase tracking-widest whitespace-nowrap border-r border-[#1B3550]">
                 Plant ID
               </th>
               {isLoading
@@ -244,13 +257,13 @@ function SummaryTable({
                 : activeBrands.map(b => (
                     <th
                       key={b.id}
-                      className="px-3 py-3 text-right text-[10px] font-bold uppercase tracking-widest whitespace-nowrap min-w-22.5 text-[#A8CFDF]"
+                      className="px-3 py-3 text-center text-[10px] font-bold uppercase tracking-widest leading-tight text-[#A8CFDF]"
                     >
                       {b.label}
                     </th>
                   ))
               }
-              <th className="px-3 py-3 text-right text-[10px] font-bold uppercase tracking-widest whitespace-nowrap min-w-22.5 border-l-2 border-gray-400 text-gray-300">
+              <th className="px-3 py-3 text-center text-[10px] font-bold uppercase tracking-widest whitespace-nowrap border-l-2 border-gray-400 text-gray-300">
                 Total
               </th>
             </tr>
@@ -264,8 +277,8 @@ function SummaryTable({
                       <Skeleton className="h-3 w-14" />
                     </td>
                     {Array.from({ length: 5 }).map((_, j) => (
-                      <td key={j} className="px-3 py-3 text-right">
-                        <Skeleton className="h-3 w-10 ml-auto" />
+                      <td key={j} className="px-3 py-3 text-center">
+                        <Skeleton className="h-3 w-10 mx-auto" />
                       </td>
                     ))}
                   </tr>
@@ -298,7 +311,7 @@ function SummaryTable({
                           <td
                             key={b.id}
                             className={cn(
-                              'px-3 py-2.5 text-right text-xs tabular-nums whitespace-nowrap',
+                              'px-3 py-2.5 text-center text-xs tabular-nums whitespace-nowrap',
                               alert   ? 'bg-red-50 text-red-600 font-semibold' :
                               v === 0 ? 'text-gray-300' : 'text-gray-800',
                             )}
@@ -307,7 +320,7 @@ function SummaryTable({
                           </td>
                         );
                       })}
-                      <td className="px-3 py-2.5 text-right text-xs font-extrabold tabular-nums border-l-2 border-gray-300 bg-gray-100/70 text-gray-700">
+                      <td className="px-3 py-2.5 text-center text-xs font-extrabold tabular-nums border-l-2 border-gray-300 bg-gray-100/70 text-gray-700">
                         {fmt(getTotalValue(row))}
                       </td>
                     </tr>
@@ -323,11 +336,11 @@ function SummaryTable({
                   Total
                 </td>
                 {activeBrands.map(b => (
-                  <td key={b.id} className="px-3 py-3 text-right text-xs font-bold tabular-nums text-white">
+                  <td key={b.id} className="px-3 py-3 text-center text-xs font-bold tabular-nums text-white">
                     {fmt(getValue(totals, b.id))}
                   </td>
                 ))}
-                <td className="px-3 py-3 text-right text-sm font-extrabold tabular-nums text-gray-300 border-l-2 border-gray-400">
+                <td className="px-3 py-3 text-center text-sm font-extrabold tabular-nums text-gray-300 border-l-2 border-gray-400">
                   {fmt(getTotalValue(totals))}
                 </td>
               </tr>
