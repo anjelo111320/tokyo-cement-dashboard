@@ -140,15 +140,15 @@ function exportPdf(
       headStyles: { fillColor: [13, 31, 45], textColor: 255 },
       // Total row — same eye-catching treatment as the Total column, bold white on navy.
       footStyles: { fillColor: [13, 31, 45], textColor: 255, fontStyle: 'bold' },
-      // Total column — indigo highlight running through every row, including head/foot,
+      // Total column — gray highlight running through every row, including head/foot,
       // so it reads as one continuous "Total" column top to bottom.
       columnStyles: {
-        [totalColIndex]: { fillColor: [238, 242, 255], textColor: [67, 56, 202], fontStyle: 'bold' },
+        [totalColIndex]: { fillColor: [243, 244, 246], textColor: [55, 65, 81], fontStyle: 'bold' },
       },
       didParseCell: (hookData) => {
         if (hookData.column.index === totalColIndex && hookData.section !== 'body') {
           hookData.cell.styles.fillColor = [13, 31, 45];
-          hookData.cell.styles.textColor = [165, 180, 252];
+          hookData.cell.styles.textColor = [209, 213, 219];
         }
       },
       margin: { left: 14, right: 14 },
@@ -250,7 +250,7 @@ function SummaryTable({
                     </th>
                   ))
               }
-              <th className="px-3 py-3 text-right text-[10px] font-bold uppercase tracking-widest whitespace-nowrap min-w-22.5 border-l-2 border-indigo-400 text-indigo-300">
+              <th className="px-3 py-3 text-right text-[10px] font-bold uppercase tracking-widest whitespace-nowrap min-w-22.5 border-l-2 border-gray-400 text-gray-300">
                 Total
               </th>
             </tr>
@@ -307,7 +307,7 @@ function SummaryTable({
                           </td>
                         );
                       })}
-                      <td className="px-3 py-2.5 text-right text-xs font-extrabold tabular-nums border-l-2 border-indigo-200 bg-indigo-50/70 text-indigo-700">
+                      <td className="px-3 py-2.5 text-right text-xs font-extrabold tabular-nums border-l-2 border-gray-300 bg-gray-100/70 text-gray-700">
                         {fmt(getTotalValue(row))}
                       </td>
                     </tr>
@@ -327,7 +327,7 @@ function SummaryTable({
                     {fmt(getValue(totals, b.id))}
                   </td>
                 ))}
-                <td className="px-3 py-3 text-right text-sm font-extrabold tabular-nums text-indigo-300 border-l-2 border-indigo-400">
+                <td className="px-3 py-3 text-right text-sm font-extrabold tabular-nums text-gray-300 border-l-2 border-gray-400">
                   {fmt(getTotalValue(totals))}
                 </td>
               </tr>
