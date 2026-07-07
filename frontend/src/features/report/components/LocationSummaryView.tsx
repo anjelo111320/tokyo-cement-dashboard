@@ -103,7 +103,7 @@ function exportCsv(
   });
 
   const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
-  downloadBlob(blob, `location-summary-${new Date().toISOString().slice(0, 10)}.csv`);
+  downloadBlob(blob, `plant-elc-stock-${new Date().toISOString().slice(0, 10)}.csv`);
 }
 
 function exportPdf(
@@ -117,7 +117,7 @@ function exportPdf(
   const doc = new jsPDF({ orientation: 'landscape' });
 
   doc.setFontSize(14);
-  doc.text('Location Summary', 14, 14);
+  doc.text('Plant & ELC Stock', 14, 14);
   doc.setFontSize(9);
   doc.setTextColor(120);
   doc.text(`Material type: ${matTypeLabel} · Unit: ${unitLabel} · Generated ${new Date().toLocaleString()}`, 14, 20);
@@ -140,7 +140,7 @@ function exportPdf(
     y = withTable.lastAutoTable.finalY + 12;
   });
 
-  doc.save(`location-summary-${new Date().toISOString().slice(0, 10)}.pdf`);
+  doc.save(`plant-elc-stock-${new Date().toISOString().slice(0, 10)}.pdf`);
 }
 
 // ── Export button with scope prompt ─────────────────────────────────────────
@@ -215,8 +215,8 @@ function SummaryTable({
         <table className="min-w-full text-sm border-collapse">
           <thead className="bg-[#0D1F2D] text-white">
             <tr>
-              <th className="sticky left-0 z-10 bg-[#0D1F2D] px-4 py-3 text-left text-[11px] font-bold uppercase tracking-widest whitespace-nowrap min-w-50 border-r border-[#1B3550]">
-                Plant
+              <th className="sticky left-0 z-10 bg-[#0D1F2D] px-3 py-3 text-left text-[11px] font-bold uppercase tracking-widest whitespace-nowrap w-24 border-r border-[#1B3550]">
+                Plant ID
               </th>
               {isLoading
                 ? Array.from({ length: 5 }).map((_, i) => (
@@ -243,8 +243,8 @@ function SummaryTable({
             {isLoading
               ? Array.from({ length: 6 }).map((_, i) => (
                   <tr key={i} className="bg-white">
-                    <td className="sticky left-0 bg-white px-4 py-3 border-r border-gray-100">
-                      <Skeleton className="h-3 w-36" />
+                    <td className="sticky left-0 bg-white px-3 py-3 border-r border-gray-100">
+                      <Skeleton className="h-3 w-14" />
                     </td>
                     {Array.from({ length: 5 }).map((_, j) => (
                       <td key={j} className="px-3 py-3 text-right">
@@ -264,14 +264,15 @@ function SummaryTable({
                   const rowBg = i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50';
                   return (
                     <tr key={row.plant_id} className={cn('hover:bg-blue-50/30 transition-colors', rowBg)}>
-                      <td className={cn(
-                        'sticky left-0 z-10 px-4 py-2.5 text-xs font-semibold text-gray-900 whitespace-nowrap border-r border-gray-100',
-                        rowBg,
-                      )}>
-                        {row.plant_name}
-                        <p className="text-[9px] font-mono font-normal text-gray-400 mt-0.5">
-                          {row.plant_id}{row.city ? ` · ${row.city}` : ''}
-                        </p>
+                      <td
+                        className={cn(
+                          'sticky left-0 z-10 px-3 py-2.5 text-xs border-r border-gray-100',
+                          rowBg,
+                        )}
+                        title={`${row.plant_name}${row.city ? ` · ${row.city}` : ''}`}
+                      >
+                        <p className="font-mono font-bold text-gray-900">{row.plant_id}</p>
+                        <p className="text-[9px] font-normal text-gray-400 truncate max-w-20">{row.plant_name}</p>
                       </td>
                       {activeBrands.map(b => {
                         const v     = getValue(row, b.id);
@@ -301,7 +302,7 @@ function SummaryTable({
           {!isLoading && (
             <tfoot>
               <tr className="bg-[#0D1F2D]/5 border-t-2 border-[#0D1F2D]/20">
-                <td className="sticky left-0 bg-[#0D1F2D]/5 px-4 py-3 text-xs font-bold text-gray-900 uppercase tracking-widest border-r border-gray-200">
+                <td className="sticky left-0 z-10 bg-[#0D1F2D]/5 px-3 py-3 text-xs font-bold text-gray-900 uppercase tracking-widest border-r border-gray-200">
                   Total
                 </td>
                 {activeBrands.map(b => (
@@ -336,9 +337,14 @@ export function LocationSummaryView() {
 
   const { data, isLoading, isError } = useLocationSummary(includeBags, includeBulk, selectedPlants, activeOnly);
 
-  // Every admin-configured brand group always shows as a column now, even
-  // ones with no data under the current material-type filter.
-  const activeBrands: BrandGroupMeta[] = data?.brand_groups ?? [];
+  // Every admin-configured brand group shows as a column by default, even ones
+  // with no data under the current material-type/plant filter — except when
+  // "Active materials only" is on, which additionally drops any whole group
+  // that has zero stock and dispatch across the current selection (has_data
+  // is computed server-side from the same active_only-filtered movements).
+  const activeBrands: BrandGroupMeta[] = activeOnly
+    ? (data?.brand_groups.filter(b => b.has_data) ?? [])
+    : (data?.brand_groups ?? []);
 
   // Location Summary's brand-group cells already sum multiple materials into
   // one MT figure server-side, so a per-material bags-per-MT conversion isn't
@@ -358,8 +364,8 @@ export function LocationSummaryView() {
 
       {/* Filters + export */}
       <div className="flex flex-col gap-3">
-        <div className="flex items-center gap-4 flex-wrap justify-between">
-          <div className="flex items-center gap-4 flex-wrap">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 sm:flex-wrap sm:justify-between">
+          <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs font-semibold text-gray-500 uppercase tracking-widest">Material Type</span>
               <div className="flex bg-gray-100 rounded-xl p-1 gap-1">
@@ -399,7 +405,7 @@ export function LocationSummaryView() {
             <button
               onClick={() => setActiveOnly(v => !v)}
               className={cn(
-                'px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all',
+                'px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all self-start',
                 activeOnly
                   ? 'bg-[#1B3550] text-white border-[#1B3550]'
                   : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200',
@@ -410,7 +416,7 @@ export function LocationSummaryView() {
           </div>
 
           {data && (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 shrink-0">
               <ExportButton
                 icon={<Download size={12} />}
                 label="CSV"

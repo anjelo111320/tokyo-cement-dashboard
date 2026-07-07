@@ -3,8 +3,9 @@ import { ChevronDown, ChevronUp, Package, TrendingUp, TrendingDown, ArrowLeftRig
 import { PageHeader } from '@/components/common/PageHeader';
 import { Skeleton } from '@/components/common/LoadingSkeleton';
 import { cn } from '@/utils/cn';
-import { useInventoryReport, useLedgerMaterials, useLedgerTransfers } from '@/features/material_ledger/hooks/useLedger';
+import { useInventoryReport, useLedgerMaterials, useLedgerTransfers, useLedgerPlants } from '@/features/material_ledger/hooks/useLedger';
 import { MultiMaterialPicker } from '@/features/home/components/MultiMaterialPicker';
+import { MultiPlantPicker } from '@/features/home/components/MultiPlantPicker';
 import { useSettingsStore, convertQty, type UnitScale, type DisplayUnit } from '@/hooks/useSettingsStore';
 import { useLocalStorage } from '@/hooks/useLocalStorage';
 import type { MaterialReportCard, PlantReportRow } from '@/types/material_ledger.types';
@@ -429,6 +430,7 @@ export function ReportPage() {
   const [reportView,            setReportView]            = useLocalStorage<ReportView>('insee_dashboard_report_view', 'material');
   const [materialSubView,       setMaterialSubView]       = useLocalStorage<MaterialSubView>('insee_dashboard_report_material_subview', 'by_material');
   const [selectedMaterials,     setSelectedMaterials]     = useLocalStorage<string[]>('insee_dashboard_report_material_ids', []);
+  const [selectedPlants,        setSelectedPlants]        = useLocalStorage<string[]>('insee_dashboard_report_by_plant_ids', []);
   const [hideZeros,             setHideZeros]             = useLocalStorage<boolean>('insee_dashboard_report_hide_zeros', true);
   const [hideInactiveMaterials, setHideInactiveMaterials] = useLocalStorage<boolean>('insee_dashboard_report_hide_inactive_materials', true);
   const [hideInactivePlants,    setHideInactivePlants]    = useLocalStorage<boolean>('insee_dashboard_report_hide_inactive_plants', true);
@@ -436,6 +438,7 @@ export function ReportPage() {
 
   const { data: report,       isLoading: reportLoading } = useInventoryReport();
   const { data: materials,    isLoading: matsLoading   } = useLedgerMaterials();
+  const { data: plants = [] } = useLedgerPlants();
   const { data: transferData } = useLedgerTransfers();
   const { allUnitScales, getUnitScale, getThreshold } = useSettingsStore();
 
@@ -450,7 +453,9 @@ export function ReportPage() {
   const filteredCards = useMemo(() => {
     if (!report) return [];
     let cards = report.materials;
-    if (selectedMaterials.length > 0) {
+    // Material selection only applies in By Material — By Plant filters by
+    // plant instead (see visiblePlantGroups), materials always stay unfiltered here.
+    if (materialSubView === 'by_material' && selectedMaterials.length > 0) {
       cards = cards.filter(card => selectedMaterials.includes(card.material_id));
     } else if (hideInactiveMaterials) {
       // Only declutter the default "All Materials" view — an explicit material
@@ -458,7 +463,7 @@ export function ReportPage() {
       cards = cards.filter(card => !isMaterialInactive(card));
     }
     return cards;
-  }, [report, selectedMaterials, hideInactiveMaterials]);
+  }, [report, selectedMaterials, hideInactiveMaterials, materialSubView]);
 
   // Best (largest) counterpart plant per (plant, material) — a lightweight hint only.
   // Sourced from the separate VM-based transfer feed, which is not guaranteed to
@@ -519,9 +524,15 @@ export function ReportPage() {
   }, [filteredCards, transferHints]);
 
   const visiblePlantGroups = useMemo(() => {
+    // An explicit plant selection is authoritative — show every plant picked,
+    // unconditionally. hideInactivePlants only declutters the default "All
+    // Plants" view, same principle as material selection above.
+    if (selectedPlants.length > 0) {
+      return plantGroups.filter(g => selectedPlants.includes(g.plant_id));
+    }
     if (!hideInactivePlants) return plantGroups;
     return plantGroups.filter(g => !isPlantGroupInactive(g));
-  }, [plantGroups, hideInactivePlants]);
+  }, [plantGroups, hideInactivePlants, selectedPlants]);
 
   const isLoading = reportLoading || matsLoading;
 
@@ -531,25 +542,27 @@ export function ReportPage() {
         title="Stock Sheet"
         subtitle={
           reportView !== 'material'
-            ? 'Brand × location grid — floor stock and period dispatch'
+            ? 'Brand × plant grid — floor stock and period dispatch'
             : materialSubView === 'by_material'
               ? `Per-material breakdown across all plants · ${filteredCards.length} of ${report?.materials.length ?? 0} materials · showing in ${effectiveUnit}`
               : `Per-plant breakdown across all materials · ${visiblePlantGroups.length} of ${plantGroups.length} plants · showing in ${effectiveUnit}`
         }
       />
 
-      {/* ── View toggle ───────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-2 mb-4 flex-wrap">
-        <div className="flex bg-gray-100 rounded-xl p-1 gap-1 shrink-0">
+      {/* ── View toggle — main tabs on top (larger, primary), sub-tabs stacked
+           directly below (smaller, secondary) — clear two-level hierarchy on
+           every screen size, main tabs full-width on mobile for easy tapping. ── */}
+      <div className="mb-4">
+        <div className="flex bg-gray-100 rounded-xl p-1.5 gap-1.5">
           {([
             { key: 'material', label: 'Material View'     },
-            { key: 'location', label: 'Location Summary'  },
+            { key: 'location', label: 'Plant & ELC Stock'  },
           ] as { key: ReportView; label: string }[]).map(({ key, label }) => (
             <button
               key={key}
               onClick={() => setReportView(key)}
               className={cn(
-                'px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150',
+                'flex-1 sm:flex-initial px-5 py-2.5 rounded-lg text-sm font-bold transition-all duration-150',
                 reportView === key
                   ? 'bg-[#1D4E6B] text-white shadow-sm'
                   : 'text-gray-500 hover:text-gray-800',
@@ -561,7 +574,7 @@ export function ReportPage() {
         </div>
 
         {reportView === 'material' && (
-          <div className="flex bg-gray-50 rounded-lg p-0.5 gap-0.5 border border-gray-200 shrink-0">
+          <div className="flex bg-gray-50 rounded-lg p-1 gap-1 border border-gray-200 mt-2">
             {([
               { key: 'by_material', label: 'By Material — plants as rows'  },
               { key: 'by_plant',     label: 'By Plant — materials as rows' },
@@ -570,7 +583,7 @@ export function ReportPage() {
                 key={key}
                 onClick={() => setMaterialSubView(key)}
                 className={cn(
-                  'px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all duration-150 whitespace-nowrap',
+                  'flex-1 sm:flex-initial px-3 py-1.5 rounded-md text-[11px] font-semibold transition-all duration-150 whitespace-nowrap',
                   materialSubView === key
                     ? 'bg-white text-[#1D4E6B] shadow-sm'
                     : 'text-gray-400 hover:text-gray-600',
@@ -593,15 +606,23 @@ export function ReportPage() {
       {/* ── Filter bar ───────────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-4 pt-4 pb-3 mb-5 space-y-3">
 
-        {/* Material picker — full width */}
-        <MultiMaterialPicker
-          materials={materials ?? []}
-          selected={selectedMaterials}
-          onChange={setSelectedMaterials}
-        />
+        {/* Material picker (By Material) or Plant picker (By Plant) — full width */}
+        {materialSubView === 'by_material' ? (
+          <MultiMaterialPicker
+            materials={materials ?? []}
+            selected={selectedMaterials}
+            onChange={setSelectedMaterials}
+          />
+        ) : (
+          <MultiPlantPicker
+            plants={plants}
+            selected={selectedPlants}
+            onChange={setSelectedPlants}
+          />
+        )}
 
-        {/* Controls row — sits below picker, never wraps awkwardly */}
-        <div className="flex items-center justify-between gap-3 pt-2 border-t border-gray-100">
+        {/* Controls row — sits below picker, wraps on narrow/mobile screens */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-2 border-t border-gray-100">
 
           {/* MT / Bags pill toggle */}
           <div className="flex flex-col gap-1">
@@ -636,8 +657,9 @@ export function ReportPage() {
 
           <div className="flex items-center gap-2 flex-wrap justify-end">
             {/* Hide inactive materials toggle — whole material has zero activity across every plant.
-                Hidden once specific materials are picked — an explicit selection always shows in full. */}
-            {selectedMaterials.length === 0 && (
+                Hidden once specific materials are picked (By Material only) — an explicit
+                selection always shows in full; irrelevant in By Plant, where materials aren't picked. */}
+            {(materialSubView === 'by_plant' || selectedMaterials.length === 0) && (
               <button
                 onClick={() => setHideInactiveMaterials(!hideInactiveMaterials)}
                 className={cn(
@@ -653,8 +675,9 @@ export function ReportPage() {
               </button>
             )}
 
-            {/* Hide inactive plants toggle — only relevant in the By Plant (materials-as-rows) layout */}
-            {materialSubView === 'by_plant' && (
+            {/* Hide inactive plants toggle — only relevant in the By Plant (materials-as-rows) layout,
+                and hidden once specific plants are picked — an explicit selection always shows in full. */}
+            {materialSubView === 'by_plant' && selectedPlants.length === 0 && (
               <button
                 onClick={() => setHideInactivePlants(!hideInactivePlants)}
                 className={cn(
