@@ -634,7 +634,7 @@ export function ReportPage() {
                   className={cn(
                     'px-3 py-1 rounded-md text-xs font-semibold transition-all whitespace-nowrap',
                     effectiveUnit === u
-                      ? 'bg-[#1B3550] text-white shadow-sm'
+                      ? 'bg-[#2E6B8A] text-white shadow-sm'
                       : 'text-gray-500 hover:text-gray-700',
                   )}
                 >
@@ -665,7 +665,7 @@ export function ReportPage() {
                 className={cn(
                   'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all whitespace-nowrap',
                   hideInactiveMaterials
-                    ? 'bg-[#1B3550] text-white border-[#1B3550]'
+                    ? 'bg-[#2E6B8A] text-white border-[#2E6B8A]'
                     : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200',
                 )}
               >
@@ -683,7 +683,7 @@ export function ReportPage() {
                 className={cn(
                   'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all whitespace-nowrap',
                   hideInactivePlants
-                    ? 'bg-[#1B3550] text-white border-[#1B3550]'
+                    ? 'bg-[#2E6B8A] text-white border-[#2E6B8A]'
                     : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200',
                 )}
               >
@@ -701,7 +701,7 @@ export function ReportPage() {
               className={cn(
                 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all whitespace-nowrap',
                 hideZeros
-                  ? 'bg-[#1B3550] text-white border-[#1B3550]'
+                  ? 'bg-[#2E6B8A] text-white border-[#2E6B8A]'
                   : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200',
               )}
             >

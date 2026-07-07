@@ -4,6 +4,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { useLocationSummary, useLedgerPlants } from '@/features/material_ledger/hooks/useLedger';
 import { useSettingsStore } from '@/hooks/useSettingsStore';
+import { useLocalStorage } from '@/hooks/useLocalStorage';
 import { MultiPlantPicker } from '@/features/home/components/MultiPlantPicker';
 import { Skeleton } from '@/components/common/LoadingSkeleton';
 import { cn } from '@/utils/cn';
@@ -58,7 +59,7 @@ function buildSectionRows(
   getValue: (row: LocationSummaryRow, brandId: string) => number,
   getTotalValue: (row: LocationSummaryRow) => number,
   convert: (mt: number) => number,
-): { head: string[]; body: string[][] } {
+): { head: string[]; body: string[][]; foot: string[] } {
   const head = ['Plant ID', 'Plant Name', ...activeBrands.map(b => b.label), 'Total'];
   const body = data.locations.map(row => [
     row.plant_id,
@@ -66,13 +67,13 @@ function buildSectionRows(
     ...activeBrands.map(b => String(convert(getValue(row, b.id)))),
     String(convert(getTotalValue(row))),
   ]);
-  body.push([
+  const foot = [
     'TOTAL',
     '',
     ...activeBrands.map(b => String(convert(getValue(data.totals, b.id)))),
     String(convert(getTotalValue(data.totals))),
-  ]);
-  return { head, body };
+  ];
+  return { head, body, foot };
 }
 
 const SECTIONS: { key: 'stock' | 'dispatch'; title: string; getValue: (row: LocationSummaryRow, bid: string) => number; getTotal: (row: LocationSummaryRow) => number }[] = [
@@ -95,10 +96,11 @@ function exportCsv(
   const lines: string[] = [];
 
   sectionsForScope(scope).forEach(({ title, getValue, getTotal }) => {
-    const { head, body } = buildSectionRows(data, activeBrands, getValue, getTotal, convert);
+    const { head, body, foot } = buildSectionRows(data, activeBrands, getValue, getTotal, convert);
     lines.push(csvField(`${title} (${unitLabel})`));
     lines.push(head.map(csvField).join(','));
     body.forEach(r => lines.push(r.map(csvField).join(',')));
+    lines.push(foot.map(csvField).join(','));
     lines.push('');
   });
 
@@ -125,15 +127,30 @@ function exportPdf(
 
   let y = 28;
   sectionsForScope(scope).forEach(({ title, getValue, getTotal }) => {
-    const { head, body } = buildSectionRows(data, activeBrands, getValue, getTotal, convert);
+    const { head, body, foot } = buildSectionRows(data, activeBrands, getValue, getTotal, convert);
     doc.setFontSize(11);
     doc.text(`${title} (${unitLabel})`, 14, y);
+    const totalColIndex = head.length - 1;
     autoTable(doc, {
       startY: y + 3,
       head: [head],
       body,
+      foot: [foot],
       styles: { fontSize: 7 },
-      headStyles: { fillColor: [13, 31, 45] },
+      headStyles: { fillColor: [13, 31, 45], textColor: 255 },
+      // Total row — same eye-catching treatment as the Total column, bold white on navy.
+      footStyles: { fillColor: [13, 31, 45], textColor: 255, fontStyle: 'bold' },
+      // Total column — indigo highlight running through every row, including head/foot,
+      // so it reads as one continuous "Total" column top to bottom.
+      columnStyles: {
+        [totalColIndex]: { fillColor: [238, 242, 255], textColor: [67, 56, 202], fontStyle: 'bold' },
+      },
+      didParseCell: (hookData) => {
+        if (hookData.column.index === totalColIndex && hookData.section !== 'body') {
+          hookData.cell.styles.fillColor = [13, 31, 45];
+          hookData.cell.styles.textColor = [165, 180, 252];
+        }
+      },
       margin: { left: 14, right: 14 },
     });
     const withTable = doc as unknown as { lastAutoTable: { finalY: number } };
@@ -233,7 +250,7 @@ function SummaryTable({
                     </th>
                   ))
               }
-              <th className="px-3 py-3 text-right text-[10px] font-bold uppercase tracking-widest whitespace-nowrap min-w-22.5 border-l border-[#1B3550] text-white">
+              <th className="px-3 py-3 text-right text-[10px] font-bold uppercase tracking-widest whitespace-nowrap min-w-22.5 border-l-2 border-indigo-400 text-indigo-300">
                 Total
               </th>
             </tr>
@@ -290,7 +307,7 @@ function SummaryTable({
                           </td>
                         );
                       })}
-                      <td className="px-3 py-2.5 text-right text-xs font-bold tabular-nums border-l border-gray-200 text-[#1D4E6B]">
+                      <td className="px-3 py-2.5 text-right text-xs font-extrabold tabular-nums border-l-2 border-indigo-200 bg-indigo-50/70 text-indigo-700">
                         {fmt(getTotalValue(row))}
                       </td>
                     </tr>
@@ -301,16 +318,16 @@ function SummaryTable({
 
           {!isLoading && (
             <tfoot>
-              <tr className="bg-[#0D1F2D]/5 border-t-2 border-[#0D1F2D]/20">
-                <td className="sticky left-0 z-10 bg-[#0D1F2D]/5 px-3 py-3 text-xs font-bold text-gray-900 uppercase tracking-widest border-r border-gray-200">
+              <tr className="bg-[#0D1F2D] border-t-2 border-[#0D1F2D]">
+                <td className="sticky left-0 z-10 bg-[#0D1F2D] px-3 py-3 text-xs font-bold text-white uppercase tracking-widest border-r border-white/10">
                   Total
                 </td>
                 {activeBrands.map(b => (
-                  <td key={b.id} className="px-3 py-3 text-right text-xs font-bold tabular-nums text-gray-900">
+                  <td key={b.id} className="px-3 py-3 text-right text-xs font-bold tabular-nums text-white">
                     {fmt(getValue(totals, b.id))}
                   </td>
                 ))}
-                <td className="px-3 py-3 text-right text-xs font-bold tabular-nums text-[#1D4E6B] border-l border-gray-200">
+                <td className="px-3 py-3 text-right text-sm font-extrabold tabular-nums text-indigo-300 border-l-2 border-indigo-400">
                   {fmt(getTotalValue(totals))}
                 </td>
               </tr>
@@ -325,10 +342,10 @@ function SummaryTable({
 // ── Main view ─────────────────────────────────────────────────────────────────
 
 export function LocationSummaryView() {
-  const [matType,        setMatType]        = useState<MaterialType>('bags');
-  const [unit,           setUnit]           = useState<DisplayUnit>('MT');
-  const [selectedPlants, setSelectedPlants] = useState<string[]>([]);
-  const [activeOnly,     setActiveOnly]     = useState(false);
+  const [matType,        setMatType]        = useLocalStorage<MaterialType>('insee_dashboard_location_material_type', 'bags');
+  const [unit,           setUnit]           = useLocalStorage<DisplayUnit>('insee_dashboard_location_unit', 'MT');
+  const [selectedPlants, setSelectedPlants] = useLocalStorage<string[]>('insee_dashboard_location_plant_ids', []);
+  const [activeOnly,     setActiveOnly]     = useLocalStorage<boolean>('insee_dashboard_location_active_only', false);
   const { allUnitScales } = useSettingsStore();
   const { data: plants = [] } = useLedgerPlants();
 
@@ -375,7 +392,7 @@ export function LocationSummaryView() {
                     onClick={() => setMatType(key)}
                     className={cn(
                       'px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150',
-                      matType === key ? 'bg-[#1D4E6B] text-white shadow-sm' : 'text-gray-500 hover:text-gray-800',
+                      matType === key ? 'bg-[#2E6B8A] text-white shadow-sm' : 'text-gray-500 hover:text-gray-800',
                     )}
                   >
                     {label}
@@ -393,7 +410,7 @@ export function LocationSummaryView() {
                     onClick={() => setUnit(u)}
                     className={cn(
                       'px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150',
-                      unit === u ? 'bg-[#1D4E6B] text-white shadow-sm' : 'text-gray-500 hover:text-gray-800',
+                      unit === u ? 'bg-[#2E6B8A] text-white shadow-sm' : 'text-gray-500 hover:text-gray-800',
                     )}
                   >
                     {u === 'bags' ? 'Bags' : 'MT'}
@@ -403,11 +420,11 @@ export function LocationSummaryView() {
             </div>
 
             <button
-              onClick={() => setActiveOnly(v => !v)}
+              onClick={() => setActiveOnly(!activeOnly)}
               className={cn(
                 'px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all self-start',
                 activeOnly
-                  ? 'bg-[#1B3550] text-white border-[#1B3550]'
+                  ? 'bg-[#2E6B8A] text-white border-[#2E6B8A]'
                   : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200',
               )}
             >

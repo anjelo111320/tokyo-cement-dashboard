@@ -296,12 +296,85 @@ function BrandGroupSelect({
   );
 }
 
+/** Lists every brand group with how many materials currently use it, and lets
+ * an admin delete one. Deleting auto-unassigns those materials (sets their
+ * brand_group back to — None —) server-side in the same transaction — see
+ * DELETE /admin/brand-groups/{id}. */
+function ManageBrandGroupsModal({ onClose }: { onClose: () => void }) {
+  const qc = useQueryClient();
+  const { data: groups = [] }    = useQuery({ queryKey: ['admin', 'brand-groups'], queryFn: adminService.getBrandGroups });
+  const { data: mats = [] }      = useQuery({ queryKey: ['admin', 'materials'],    queryFn: adminService.getMaterials });
+
+  const countFor = (groupId: string) => mats.filter(m => m.brand_group === groupId).length;
+
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => adminService.deleteBrandGroup(id),
+    onSuccess: ({ unassigned_count }) => {
+      qc.invalidateQueries({ queryKey: ['admin', 'brand-groups'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'materials'] });
+      if (unassigned_count > 0) {
+        window.alert(`Deleted. ${unassigned_count} material${unassigned_count !== 1 ? 's' : ''} moved to — None —.`);
+      }
+    },
+  });
+
+  function handleDelete(group: AdminBrandGroup) {
+    const count = countFor(group.id);
+    const warning = count > 0
+      ? `Delete "${group.label}"?\n${count} material${count !== 1 ? 's' : ''} currently in this group will be moved to — None — (Unassigned).`
+      : `Delete "${group.label}"? No materials are currently assigned to it.`;
+    if (window.confirm(warning)) deleteMut.mutate(group.id);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-[2px]" onClick={onClose}>
+      <div
+        className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[80vh] overflow-y-auto"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 sticky top-0 bg-white">
+          <h3 className="text-sm font-bold text-gray-900">Manage Brand Groups</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600" aria-label="Close">
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="divide-y divide-gray-100">
+          {groups.length === 0 ? (
+            <p className="px-5 py-6 text-xs text-gray-400 text-center">No brand groups yet.</p>
+          ) : (
+            groups.map(g => (
+              <div key={g.id} className="flex items-center justify-between gap-3 px-5 py-3">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-gray-800 truncate">{g.label}</p>
+                  <p className="text-[10px] text-gray-400">
+                    {countFor(g.id)} material{countFor(g.id) !== 1 ? 's' : ''}
+                  </p>
+                </div>
+                <button
+                  onClick={() => handleDelete(g)}
+                  disabled={deleteMut.isPending}
+                  className="shrink-0 text-gray-300 hover:text-red-500 disabled:opacity-40 transition-colors"
+                  title={`Delete ${g.label}`}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MaterialsTab() {
   const qc = useQueryClient();
   const { data: mats = [], isLoading } = useQuery({ queryKey: ['admin', 'materials'], queryFn: adminService.getMaterials });
-  const [edits,   setEdits]   = useState<Record<string, Partial<AdminMaterial>>>({});
-  const [showAdd, setShowAdd] = useState(false);
-  const [draft,   setDraft]   = useState<AdminMaterial>({ ...BLANK_MAT });
+  const [edits,          setEdits]          = useState<Record<string, Partial<AdminMaterial>>>({});
+  const [showAdd,        setShowAdd]        = useState(false);
+  const [draft,          setDraft]          = useState<AdminMaterial>({ ...BLANK_MAT });
+  const [showManageGroups, setShowManageGroups] = useState(false);
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['admin', 'materials'] });
 
@@ -324,6 +397,10 @@ function MaterialsTab() {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 justify-end">
+        <button onClick={() => setShowManageGroups(true)}
+          className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors">
+          Manage Groups
+        </button>
         <button onClick={() => syncMut.mutate()} disabled={syncMut.isPending}
           className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors">
           {syncMut.isPending ? 'Syncing…' : 'Sync from CSV'}
@@ -484,6 +561,8 @@ function MaterialsTab() {
           </tbody>
         </table>
       </div>
+
+      {showManageGroups && <ManageBrandGroupsModal onClose={() => setShowManageGroups(false)} />}
     </div>
   );
 }

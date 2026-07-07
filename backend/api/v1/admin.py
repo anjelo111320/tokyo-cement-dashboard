@@ -283,6 +283,25 @@ async def create_brand_group(body: BrandGroupCreate, db: AsyncSession = Depends(
     return {"success": True, "data": {"id": group.id, "label": group.label, "sort_order": group.sort_order}}
 
 
+@router.delete("/brand-groups/{group_id}")
+async def delete_brand_group(group_id: str, db: AsyncSession = Depends(get_db), _: User = Depends(require_admin)):
+    group = (await db.execute(select(BrandGroup).where(BrandGroup.id == group_id))).scalar_one_or_none()
+    if not group:
+        raise HTTPException(status_code=404, detail="Brand group not found")
+
+    # brand_group is a plain string column with no DB-level foreign key, so
+    # deleting the row alone would leave any material still tagged with this
+    # id pointing at nothing. Unassign them first, in the same transaction.
+    result = await db.execute(
+        sa_update(Material).where(Material.brand_group == group_id).values(brand_group=None)
+    )
+    unassigned_count = result.rowcount
+
+    await db.delete(group)
+    await db.commit()
+    return {"success": True, "data": {"id": group_id, "unassigned_count": unassigned_count}}
+
+
 # ── Datasets (admin-uploaded inventory CSVs) ─────────────────────────────────
 # Library model: uploaded CSVs are stored whole in the DB until deleted.
 # At most one is active; it is pinned into the CSV cache and drives every

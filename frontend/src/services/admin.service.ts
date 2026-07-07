@@ -93,6 +93,7 @@ export const adminService = {
   // Brand groups
   getBrandGroups:   () => apiClient.get<{ data: { data: AdminBrandGroup[] } }>('/admin/brand-groups').then(wrap<AdminBrandGroup[]>),
   createBrandGroup: (label: string) => apiClient.post<{ data: { data: AdminBrandGroup } }>('/admin/brand-groups', { label }).then(wrap<AdminBrandGroup>),
+  deleteBrandGroup: (id: string) => apiClient.delete<{ data: { data: { id: string; unassigned_count: number } } }>(`/admin/brand-groups/${id}`).then(wrap<{ id: string; unassigned_count: number }>),
 
   // Users
   getUsers: () => apiClient.get<{ data: { data: AdminUser[] } }>('/admin/users').then(wrap<AdminUser[]>),

@@ -9,6 +9,7 @@ import { convertQty, type UnitScale } from '@/hooks/useSettingsStore';
 import { useLedgerMaterials, useLedgerTransfers } from '@/features/material_ledger/hooks/useLedger';
 import type { InventorySummary, PlantInventoryRow } from '@/types/material_ledger.types';
 import { useSettingsStore, type ZeroStockMode } from '@/hooks/useSettingsStore';
+import { useLocalStorage } from '@/hooks/useLocalStorage';
 
 interface Props {
   summary:        InventorySummary | undefined;
@@ -389,8 +390,8 @@ export function PlantInventoryTable({ summary, isLoading, unitScale, zeroStockMo
   const unit  = scale.unit;
 
   const [selectedRow,      setSelectedRow]      = useState<PlantInventoryRow | null>(null);
-  const [hideZeros,        setHideZeros]        = useState(true);
-  const [showAlertsOnly,   setShowAlertsOnly]   = useState(true);
+  const [hideZeros,        setHideZeros]        = useLocalStorage<boolean>('insee_dashboard_hide_zeros', true);
+  const [showAlertsOnly,   setShowAlertsOnly]   = useLocalStorage<boolean>('insee_dashboard_show_alerts_only', true);
   const [sortCol,          setSortCol]          = useState<'on_hand_mt' | 'in_transit_out_mt' | 'in_transit_in_mt' | null>(null);
   const [sortDir,          setSortDir]          = useState<'asc' | 'desc'>('desc');
 
@@ -447,11 +448,11 @@ export function PlantInventoryTable({ summary, isLoading, unitScale, zeroStockMo
             </span>
           ) : (
             <button
-              onClick={() => setHideZeros(v => !v)}
+              onClick={() => setHideZeros(!hideZeros)}
               className={cn(
                 'shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all duration-150',
                 hideZeros
-                  ? 'bg-[#1B3550] text-white border-[#1B3550]'
+                  ? 'bg-[#2E6B8A] text-white border-[#2E6B8A]'
                   : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200',
               )}
             >
@@ -523,7 +524,7 @@ export function PlantInventoryTable({ summary, isLoading, unitScale, zeroStockMo
                   <span className="font-semibold text-gray-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Status</span>
                   {!hasPlantFilter && (
                   <button
-                    onClick={() => setShowAlertsOnly(v => !v)}
+                    onClick={() => setShowAlertsOnly(!showAlertsOnly)}
                     title={showAlertsOnly ? 'Showing low & out only — click to clear' : 'Show only low & out stock plants'}
                     className={cn(
                       'flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold border transition-all duration-150',
