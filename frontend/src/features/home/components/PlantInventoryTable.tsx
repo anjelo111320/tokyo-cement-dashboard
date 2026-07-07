@@ -17,6 +17,7 @@ interface Props {
   zeroStockMode?: ZeroStockMode;
   settingsMode?:  ZeroStockMode;
   onModeChange?:  (mode: ZeroStockMode) => void;
+  hasPlantFilter?: boolean;  // true when the user explicitly picked plants — always show all of them
 }
 
 // ── Status pill ───────────────────────────────────────────────────────────────
@@ -383,7 +384,7 @@ function PlantDetailModal({
 
 // ── Main table ────────────────────────────────────────────────────────────────
 
-export function PlantInventoryTable({ summary, isLoading, unitScale, zeroStockMode = 'accurate', settingsMode, onModeChange }: Props) {
+export function PlantInventoryTable({ summary, isLoading, unitScale, zeroStockMode = 'accurate', settingsMode, onModeChange, hasPlantFilter = false }: Props) {
   const scale = unitScale ?? { unit: 'MT' as const, bagsPerMt: 1 };
   const unit  = scale.unit;
 
@@ -407,8 +408,11 @@ export function PlantInventoryTable({ summary, isLoading, unitScale, zeroStockMo
   const allRows         = summary?.rows ?? [];
   const zeroRows        = allRows.filter(r => r.on_hand_mt === 0 && r.in_transit_out_mt === 0 && r.in_transit_in_mt === 0);
   const alertRows       = allRows.filter(r => r.status === 'low' || r.status === 'out');
-  const afterZeroFilter = hideZeros ? allRows.filter(r => !(r.on_hand_mt === 0 && r.in_transit_out_mt === 0 && r.in_transit_in_mt === 0)) : allRows;
-  const afterAlertFilter = showAlertsOnly ? afterZeroFilter.filter(r => r.status === 'low' || r.status === 'out') : afterZeroFilter;
+  // An explicit plant selection is authoritative — show every plant the user
+  // picked, unconditionally. The hide-zero / alerts-only toggles only declutter
+  // the default "All Plants" view.
+  const afterZeroFilter = (hideZeros && !hasPlantFilter) ? allRows.filter(r => !(r.on_hand_mt === 0 && r.in_transit_out_mt === 0 && r.in_transit_in_mt === 0)) : allRows;
+  const afterAlertFilter = (showAlertsOnly && !hasPlantFilter) ? afterZeroFilter.filter(r => r.status === 'low' || r.status === 'out') : afterZeroFilter;
   const visibleRows     = sortCol
     ? [...afterAlertFilter].sort((a, b) => sortDir === 'asc' ? a[sortCol] - b[sortCol] : b[sortCol] - a[sortCol])
     : afterAlertFilter;
@@ -437,22 +441,28 @@ export function PlantInventoryTable({ summary, isLoading, unitScale, zeroStockMo
               Available Stock = closing balance (EB) · In-Transit = transfer movements (BV rows) · Click a row for details
             </p>
           </div>
-          <button
-            onClick={() => setHideZeros(v => !v)}
-            className={cn(
-              'shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all duration-150',
-              hideZeros
-                ? 'bg-[#1B3550] text-white border-[#1B3550]'
-                : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200',
-            )}
-          >
-            {hideZeros ? 'Showing active' : 'Show active only'}
-            {hideZeros && zeroRows.length > 0 && (
-              <span className="bg-white/20 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none">
-                {zeroRows.length} hidden
-              </span>
-            )}
-          </button>
+          {hasPlantFilter ? (
+            <span className="shrink-0 text-[10px] font-semibold text-gray-400 px-3 py-1.5">
+              Showing all {allRows.length} selected plant{allRows.length !== 1 ? 's' : ''}
+            </span>
+          ) : (
+            <button
+              onClick={() => setHideZeros(v => !v)}
+              className={cn(
+                'shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all duration-150',
+                hideZeros
+                  ? 'bg-[#1B3550] text-white border-[#1B3550]'
+                  : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200',
+              )}
+            >
+              {hideZeros ? 'Showing active' : 'Show active only'}
+              {hideZeros && zeroRows.length > 0 && (
+                <span className="bg-white/20 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none">
+                  {zeroRows.length} hidden
+                </span>
+              )}
+            </button>
+          )}
         </div>
 
         {/* ── Alert mode override button ──────────────────────────────── */}
@@ -511,6 +521,7 @@ export function PlantInventoryTable({ summary, isLoading, unitScale, zeroStockMo
               <th className="py-2.5 px-4 text-left">
                 <div className="flex items-center gap-1.5">
                   <span className="font-semibold text-gray-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Status</span>
+                  {!hasPlantFilter && (
                   <button
                     onClick={() => setShowAlertsOnly(v => !v)}
                     title={showAlertsOnly ? 'Showing low & out only — click to clear' : 'Show only low & out stock plants'}
@@ -528,6 +539,7 @@ export function PlantInventoryTable({ summary, isLoading, unitScale, zeroStockMo
                       </span>
                     )}
                   </button>
+                  )}
                 </div>
               </th>
             </tr>

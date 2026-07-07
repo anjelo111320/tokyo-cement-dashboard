@@ -452,8 +452,9 @@ export function ReportPage() {
     let cards = report.materials;
     if (selectedMaterials.length > 0) {
       cards = cards.filter(card => selectedMaterials.includes(card.material_id));
-    }
-    if (hideInactiveMaterials) {
+    } else if (hideInactiveMaterials) {
+      // Only declutter the default "All Materials" view — an explicit material
+      // selection is authoritative and should always show in full.
       cards = cards.filter(card => !isMaterialInactive(card));
     }
     return cards;
@@ -634,20 +635,23 @@ export function ReportPage() {
           </div>
 
           <div className="flex items-center gap-2 flex-wrap justify-end">
-            {/* Hide inactive materials toggle — whole material has zero activity across every plant */}
-            <button
-              onClick={() => setHideInactiveMaterials(!hideInactiveMaterials)}
-              className={cn(
-                'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all whitespace-nowrap',
-                hideInactiveMaterials
-                  ? 'bg-[#1B3550] text-white border-[#1B3550]'
-                  : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200',
-              )}
-            >
-              <Filter size={11} />
-              <span className="hidden sm:inline">{hideInactiveMaterials ? 'Hiding inactive materials' : 'Show inactive materials'}</span>
-              <span className="sm:hidden">{hideInactiveMaterials ? 'Hide inactive ✓' : 'Hide inactive'}</span>
-            </button>
+            {/* Hide inactive materials toggle — whole material has zero activity across every plant.
+                Hidden once specific materials are picked — an explicit selection always shows in full. */}
+            {selectedMaterials.length === 0 && (
+              <button
+                onClick={() => setHideInactiveMaterials(!hideInactiveMaterials)}
+                className={cn(
+                  'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all whitespace-nowrap',
+                  hideInactiveMaterials
+                    ? 'bg-[#1B3550] text-white border-[#1B3550]'
+                    : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200',
+                )}
+              >
+                <Filter size={11} />
+                <span className="hidden sm:inline">{hideInactiveMaterials ? 'Hiding inactive materials' : 'Show inactive materials'}</span>
+                <span className="sm:hidden">{hideInactiveMaterials ? 'Hide inactive ✓' : 'Hide inactive'}</span>
+              </button>
+            )}
 
             {/* Hide inactive plants toggle — only relevant in the By Plant (materials-as-rows) layout */}
             {materialSubView === 'by_plant' && (

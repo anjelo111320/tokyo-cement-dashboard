@@ -25,8 +25,6 @@ export function HomePage() {
   const [modeOverride, setModeOverride] = useState<ZeroStockMode | null>(null);
   const effectiveMode: ZeroStockMode = modeOverride ?? settingsMode;
 
-  const activePlants = plants.filter(p => p.has_ledger_data);
-
   // Materials scoped to selected plants — re-fetches when plantIds changes
   const { data: materials = [], isLoading: materialsLoading } = useLedgerMaterials(
     plantIds.length ? plantIds : undefined,
@@ -81,7 +79,7 @@ export function HomePage() {
         <div>
           <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Plants</p>
           <MultiPlantPicker
-            plants={activePlants}
+            plants={plants}
             selected={plantIds}
             onChange={setPlantIds}
           />
@@ -120,6 +118,7 @@ export function HomePage() {
         zeroStockMode={effectiveMode}
         settingsMode={settingsMode}
         onModeChange={setModeOverride}
+        hasPlantFilter={plantIds.length > 0}
       />
     </div>
   );

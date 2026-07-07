@@ -740,7 +740,14 @@ class MaterialLedgerService:
         rows: list[LocationSummaryRow] = []
         brands_with_data: set[str] = set()
 
-        for pid in sorted(plant_ids_seen):
+        # Explicitly-requested plants are authoritative — always give them a row
+        # (even at zero) rather than letting the "skip empty" rule below silently
+        # drop a plant the caller specifically asked to see. Plants outside the
+        # filter still only appear when they actually had matching movements.
+        requested_pids = set(plant_filter) if plant_filter else set()
+        candidate_pids = plant_ids_seen | requested_pids
+
+        for pid in sorted(candidate_pids):
             pm = plant_masters.get(pid)
             brands: dict[str, BrandGroupStockSchema] = {}
             tot_stock = 0.0
@@ -756,8 +763,9 @@ class MaterialLedgerService:
                 tot_stock += s
                 tot_disp  += d
 
-            # Skip plants with no stock and no dispatch in this CSV
-            if tot_stock == 0 and tot_disp == 0:
+            # Skip plants with no stock and no dispatch in this CSV — unless the
+            # caller explicitly requested this plant, in which case always show it.
+            if tot_stock == 0 and tot_disp == 0 and pid not in requested_pids:
                 continue
 
             rows.append(LocationSummaryRow(
