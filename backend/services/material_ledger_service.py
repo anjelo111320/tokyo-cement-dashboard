@@ -230,8 +230,11 @@ class MaterialLedgerService:
                     and m.quantity > 0):
                 in_transit_in[pid] = in_transit_in.get(pid, 0.0) + m.quantity
 
-        # Gather all plant IDs that appear in any bucket
-        all_pids = set(on_hand) | set(in_transit_out) | set(in_transit_in)
+        # Every candidate plant — not just ones with recorded movements — so a
+        # plant with zero stock, zero transit, and zero of everything else still
+        # gets a row (and is caught by the hideZeros toggle) instead of silently
+        # never appearing at all. Respects an explicit plant_ids filter if given.
+        all_pids = set(plant_ids) if plant_ids else set(plant_masters.keys())
 
         # Sum closing stock per (plant, material) so we compare each material
         # individually against its own threshold — not the plant total vs one value.
