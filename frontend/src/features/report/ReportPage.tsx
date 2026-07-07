@@ -42,9 +42,11 @@ function stockStatus(onHandMt: number, threshold: number, hasActivity: boolean):
   return 'ok';
 }
 
-const STOCK_STATUS_CLS: Record<StockStatus, string> = {
-  out: 'bg-red-50 text-red-600',
-  low: 'bg-amber-50 text-amber-700',
+// Whole-row background tint — mirrors the same amber/red convention already
+// used for plant rows on the Home page's PlantInventoryTable.
+const STOCK_ROW_CLS: Record<StockStatus, string> = {
+  out: 'bg-red-50/60 hover:bg-red-100/60',
+  low: 'bg-amber-50/50 hover:bg-amber-100/50',
   ok:  '',
 };
 
@@ -71,6 +73,10 @@ function MaterialCard({ card, hideZeros, unitScale, getThreshold }: {
   const activeCount = card.plants.filter(r => !isAllZero(r)).length;
   const unitLabel   = unitScale.unit === 'bags' ? 'bags' : 'MT';
   const threshold   = getThreshold(card.material_id);
+
+  // Low/out counts — how many of THIS material's plants are below threshold.
+  const lowCount = card.plants.filter(r => stockStatus(r.on_hand_mt, threshold, !isAllZero(r)) === 'low').length;
+  const outCount = card.plants.filter(r => stockStatus(r.on_hand_mt, threshold, !isAllZero(r)) === 'out').length;
 
   const badgeOnHand  = convertQty(card.total_on_hand,   unitScale, unitScale.unit === 'bags' ? 0 : 1);
   const badgeTransIn = convertQty(card.total_transit_in, unitScale, unitScale.unit === 'bags' ? 0 : 1);
@@ -104,6 +110,16 @@ function MaterialCard({ card, hideZeros, unitScale, getThreshold }: {
           {card.total_transit_out > 0 && (
             <span className="text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-1 rounded-lg">
               {badgeTransOut.value} {unitLabel} outgoing
+            </span>
+          )}
+          {outCount > 0 && (
+            <span className="text-[10px] font-bold bg-red-100 text-red-700 px-2 py-1 rounded-lg">
+              ✕ {outCount} out
+            </span>
+          )}
+          {lowCount > 0 && (
+            <span className="text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-1 rounded-lg">
+              ⚠ {lowCount} low
             </span>
           )}
           <span className="text-[10px] text-gray-400">
@@ -146,7 +162,7 @@ function MaterialCard({ card, hideZeros, unitScale, getThreshold }: {
                       key={row.plant_id}
                       className={cn(
                         'border-b border-gray-50 last:border-0',
-                        hasActivity ? 'hover:bg-[#0D1F2D]/3' : 'opacity-40',
+                        status !== 'ok' ? STOCK_ROW_CLS[status] : hasActivity ? 'hover:bg-[#0D1F2D]/3' : 'opacity-40',
                       )}
                     >
                       <td className="px-4 py-2.5 font-mono font-semibold text-gray-700">{row.plant_id}</td>
@@ -154,10 +170,7 @@ function MaterialCard({ card, hideZeros, unitScale, getThreshold }: {
                         <p className="text-gray-800 font-medium truncate max-w-40">{row.plant_name}</p>
                         {row.city && <p className="text-[10px] text-gray-400">{row.city}</p>}
                       </td>
-                      <td className={cn(
-                        'px-4 py-2.5 text-right font-semibold tabular-nums',
-                        status !== 'ok' ? STOCK_STATUS_CLS[status] : row.on_hand_mt > 0 ? 'text-[#1B3550]' : 'text-gray-300',
-                      )}>
+                      <td className={cn('px-4 py-2.5 text-right font-semibold tabular-nums', row.on_hand_mt > 0 ? 'text-[#1B3550]' : 'text-gray-300')}>
                         {fmtQty(row.on_hand_mt, unitScale)}
                       </td>
                       <td className={cn('px-4 py-2.5 text-right font-semibold tabular-nums', row.transit_out_mt > 0 ? 'text-amber-600' : 'text-gray-300')}>
@@ -248,6 +261,10 @@ function PlantCard({ group, hideZeros, getRowScale, unitLabel, getThreshold }: {
   const rows        = hideZeros ? group.materials.filter(m => !isAllZero(m.row)) : group.materials;
   const activeCount  = group.materials.filter(m => !isAllZero(m.row)).length;
 
+  // Low/out counts — how many materials AT THIS PLANT are below threshold.
+  const lowCount = group.materials.filter(m => stockStatus(m.row.on_hand_mt, getThreshold(m.material_id), !isAllZero(m.row)) === 'low').length;
+  const outCount = group.materials.filter(m => stockStatus(m.row.on_hand_mt, getThreshold(m.material_id), !isAllZero(m.row)) === 'out').length;
+
   // Plant-level totals mix quantities across different materials, which can have
   // different bags-per-MT factors — so unlike per-row cells (each tied to one
   // material and free to follow the page's MT/Bags toggle), totals here are only
@@ -286,6 +303,16 @@ function PlantCard({ group, hideZeros, getRowScale, unitLabel, getThreshold }: {
           {group.total_transit_out > 0 && (
             <span className="text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-1 rounded-lg">
               {badgeTransOut} MT outgoing
+            </span>
+          )}
+          {outCount > 0 && (
+            <span className="text-[10px] font-bold bg-red-100 text-red-700 px-2 py-1 rounded-lg">
+              ✕ {outCount} out
+            </span>
+          )}
+          {lowCount > 0 && (
+            <span className="text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-1 rounded-lg">
+              ⚠ {lowCount} low
             </span>
           )}
           <span className="text-[10px] text-gray-400">
@@ -329,17 +356,14 @@ function PlantCard({ group, hideZeros, getRowScale, unitLabel, getThreshold }: {
                       key={m.material_id}
                       className={cn(
                         'border-b border-gray-50 last:border-0',
-                        hasActivity ? 'hover:bg-[#0D1F2D]/3' : 'opacity-40',
+                        status !== 'ok' ? STOCK_ROW_CLS[status] : hasActivity ? 'hover:bg-[#0D1F2D]/3' : 'opacity-40',
                       )}
                     >
                       <td className="px-4 py-2.5">
                         <p className="text-gray-800 font-medium truncate max-w-56">{m.material_description}</p>
                         <p className="text-[10px] font-mono text-gray-400">{m.material_id}</p>
                       </td>
-                      <td className={cn(
-                        'px-4 py-2.5 text-right font-semibold tabular-nums',
-                        status !== 'ok' ? STOCK_STATUS_CLS[status] : row.on_hand_mt > 0 ? 'text-[#1B3550]' : 'text-gray-300',
-                      )}>
+                      <td className={cn('px-4 py-2.5 text-right font-semibold tabular-nums', row.on_hand_mt > 0 ? 'text-[#1B3550]' : 'text-gray-300')}>
                         {fmtQty(row.on_hand_mt, scale)}
                       </td>
                       <td className={cn('px-4 py-2.5 text-right font-semibold tabular-nums', row.transit_out_mt > 0 ? 'text-amber-600' : 'text-gray-300')}>
@@ -683,7 +707,7 @@ export function ReportPage() {
         </div>
         <p className="text-[10px] text-gray-400 mt-1.5">(negative values) = shown in parentheses</p>
         <p className="text-[10px] text-gray-400 mt-1">
-          On Hand: <span className="text-amber-700 font-semibold">amber</span> = below threshold ·{' '}
+          Row tint: <span className="text-amber-700 font-semibold">amber</span> = below threshold ·{' '}
           <span className="text-red-600 font-semibold">red</span> = out of stock
         </p>
       </div>

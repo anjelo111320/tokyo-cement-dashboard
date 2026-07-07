@@ -273,6 +273,8 @@ class MaterialLedgerService:
 
         alert_plant_ids: set[str] = set()
         out_plant_ids:   set[str] = set()
+        low_count:       dict[str, int] = {}
+        out_count:       dict[str, int] = {}
         for (plant_id, material_id), stock in per_mat_stock.items():
             threshold = _thresholds_store.get(material_id, 0.0)
             if threshold <= 0:
@@ -285,9 +287,13 @@ class MaterialLedgerService:
                     alert_plant_ids.add(plant_id)
                     if stock <= 0:
                         out_plant_ids.add(plant_id)
+                        out_count[plant_id] = out_count.get(plant_id, 0) + 1
+                    else:
+                        low_count[plant_id] = low_count.get(plant_id, 0) + 1
             else:  # active_only: only flag genuinely low, never flag zero
                 if 0 < stock < threshold:
                     alert_plant_ids.add(plant_id)
+                    low_count[plant_id] = low_count.get(plant_id, 0) + 1
 
         rows: list[PlantInventoryRow] = []
         for pid in sorted(all_pids):
@@ -311,6 +317,8 @@ class MaterialLedgerService:
                 in_transit_out_mt=ito,
                 in_transit_in_mt=iti,
                 status=status,
+                low_count=low_count.get(pid, 0),
+                out_count=out_count.get(pid, 0),
             ))
 
         # Sort: alerts first, then by on-hand desc
@@ -769,6 +777,7 @@ class MaterialLedgerService:
             rows.append(LocationSummaryRow(
                 location_id=lid,
                 location_label=_loc_label(loc),
+                plant_ids=sorted(loc["plant_ids"]),
                 brands=brands,
                 total_stock=round(tot_stock, 3),
                 total_dispatch=round(tot_disp, 3),

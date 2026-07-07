@@ -101,6 +101,8 @@ export interface PlantInventoryRow {
   in_transit_out_mt: number;
   in_transit_in_mt:  number;
   status:            'ok' | 'low' | 'out';
+  low_count:         number;
+  out_count:         number;
 }
 
 export interface InventorySummary {
@@ -147,6 +149,7 @@ export interface BrandGroupStock {
 export interface LocationSummaryRow {
   location_id:    string;
   location_label: string;
+  plant_ids:      string[];
   brands:         Record<string, BrandGroupStock>;
   total_stock:    number;
   total_dispatch: number;

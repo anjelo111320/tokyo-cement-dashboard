@@ -1,10 +1,15 @@
 import { useState } from 'react';
+import { Download, FileText } from 'lucide-react';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { useLocationSummary } from '@/features/material_ledger/hooks/useLedger';
+import { useSettingsStore } from '@/hooks/useSettingsStore';
 import { Skeleton } from '@/components/common/LoadingSkeleton';
 import { cn } from '@/utils/cn';
-import type { LocationSummaryRow, BrandGroupMeta } from '@/types/material_ledger.types';
+import type { LocationSummary, LocationSummaryRow, BrandGroupMeta } from '@/types/material_ledger.types';
 
 type MaterialType = 'bags' | 'bulk' | 'all';
+type DisplayUnit  = 'MT' | 'bags';
 
 function fmt(n: number): string {
   if (n === 0) return '—';
@@ -16,6 +21,123 @@ const MAT_TYPES: { key: MaterialType; label: string }[] = [
   { key: 'bulk', label: 'Bulk'      },
   { key: 'all',  label: 'All'       },
 ];
+
+const EMPTY_ROW: LocationSummaryRow = {
+  location_id: '', location_label: '', plant_ids: [], brands: {},
+  total_stock: 0, total_dispatch: 0, inventory_days: null,
+};
+
+// ── Export helpers ───────────────────────────────────────────────────────────
+
+function csvField(v: string): string {
+  return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+}
+
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function buildSectionRows(
+  data: LocationSummary,
+  activeBrands: BrandGroupMeta[],
+  getValue: (row: LocationSummaryRow, brandId: string) => number,
+  getTotalValue: (row: LocationSummaryRow) => number,
+  convert: (mt: number) => number,
+): { head: string[]; body: string[][] } {
+  const head = ['Location', 'Plant IDs', ...activeBrands.map(b => b.label), 'Total'];
+  const body = data.locations.map(row => [
+    row.location_label,
+    row.plant_ids.join(' '),
+    ...activeBrands.map(b => String(convert(getValue(row, b.id)))),
+    String(convert(getTotalValue(row))),
+  ]);
+  body.push([
+    'TOTAL',
+    '',
+    ...activeBrands.map(b => String(convert(getValue(data.totals, b.id)))),
+    String(convert(getTotalValue(data.totals))),
+  ]);
+  return { head, body };
+}
+
+function exportCsv(
+  data: LocationSummary,
+  activeBrands: BrandGroupMeta[],
+  unitLabel: string,
+  convert: (mt: number) => number,
+): void {
+  const lines: string[] = [];
+
+  function appendSection(
+    title: string,
+    getValue: (row: LocationSummaryRow, bid: string) => number,
+    getTotal: (row: LocationSummaryRow) => number,
+  ) {
+    const { head, body } = buildSectionRows(data, activeBrands, getValue, getTotal, convert);
+    lines.push(csvField(`${title} (${unitLabel})`));
+    lines.push(head.map(csvField).join(','));
+    body.forEach(r => lines.push(r.map(csvField).join(',')));
+    lines.push('');
+  }
+
+  appendSection('Warehouse Floor Stock', (r, bid) => r.brands[bid]?.stock ?? 0, r => r.total_stock);
+  appendSection('Dispatch - Period',     (r, bid) => r.brands[bid]?.dispatch ?? 0, r => r.total_dispatch);
+
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  downloadBlob(blob, `location-summary-${new Date().toISOString().slice(0, 10)}.csv`);
+}
+
+function exportPdf(
+  data: LocationSummary,
+  activeBrands: BrandGroupMeta[],
+  unitLabel: string,
+  convert: (mt: number) => number,
+  matTypeLabel: string,
+): void {
+  const doc = new jsPDF({ orientation: 'landscape' });
+
+  doc.setFontSize(14);
+  doc.text('Location Summary', 14, 14);
+  doc.setFontSize(9);
+  doc.setTextColor(120);
+  doc.text(`Material type: ${matTypeLabel} · Unit: ${unitLabel} · Generated ${new Date().toLocaleString()}`, 14, 20);
+  doc.setTextColor(0);
+
+  function appendSection(
+    startY: number,
+    title: string,
+    getValue: (row: LocationSummaryRow, bid: string) => number,
+    getTotal: (row: LocationSummaryRow) => number,
+  ): number {
+    const { head, body } = buildSectionRows(data, activeBrands, getValue, getTotal, convert);
+    doc.setFontSize(11);
+    doc.text(`${title} (${unitLabel})`, 14, startY);
+    autoTable(doc, {
+      startY: startY + 3,
+      head: [head],
+      body,
+      styles: { fontSize: 7 },
+      headStyles: { fillColor: [13, 31, 45] },
+      margin: { left: 14, right: 14 },
+    });
+    const withTable = doc as unknown as { lastAutoTable: { finalY: number } };
+    return withTable.lastAutoTable.finalY + 12;
+  }
+
+  const nextY = appendSection(28, 'Warehouse Floor Stock', (r, bid) => r.brands[bid]?.stock ?? 0, r => r.total_stock);
+  appendSection(nextY, 'Dispatch - Period', (r, bid) => r.brands[bid]?.dispatch ?? 0, r => r.total_dispatch);
+
+  doc.save(`location-summary-${new Date().toISOString().slice(0, 10)}.pdf`);
+}
+
+// ── Table ─────────────────────────────────────────────────────────────────────
 
 function SummaryTable({
   title,
@@ -90,6 +212,11 @@ function SummaryTable({
                         rowBg,
                       )}>
                         {row.location_label}
+                        {row.plant_ids.length > 0 && (
+                          <p className="text-[9px] font-mono font-normal text-gray-400 mt-0.5">
+                            {row.plant_ids.join(', ')}
+                          </p>
+                        )}
                       </td>
                       {activeBrands.map(b => {
                         const v     = getValue(row, b.id);
@@ -139,15 +266,30 @@ function SummaryTable({
   );
 }
 
+// ── Main view ─────────────────────────────────────────────────────────────────
+
 export function LocationSummaryView() {
   const [matType, setMatType] = useState<MaterialType>('bags');
+  const [unit,    setUnit]    = useState<DisplayUnit>('MT');
+  const { allUnitScales } = useSettingsStore();
 
   const includeBags = matType === 'bags' || matType === 'all';
   const includeBulk = matType === 'bulk' || matType === 'all';
 
   const { data, isLoading, isError } = useLocationSummary(includeBags, includeBulk);
 
-  const activeBrands: BrandGroupMeta[] = data?.brand_groups.filter(b => b.has_data) ?? [];
+  // Every admin-configured brand group always shows as a column now, even
+  // ones with no data under the current material-type filter.
+  const activeBrands: BrandGroupMeta[] = data?.brand_groups ?? [];
+
+  // Location Summary's brand-group cells already sum multiple materials into
+  // one MT figure server-side, so a per-material bags-per-MT conversion isn't
+  // available here — by product decision, every quantity (bag or bulk alike)
+  // converts using the one bag-weight ratio configured in Settings.
+  const bagsPerMt = Object.values(allUnitScales).find(s => s.unit === 'bags')?.bagsPerMt ?? 20;
+  const convert   = (mt: number) => unit === 'bags' ? Math.round(mt * bagsPerMt) : mt;
+  const unitLabel = unit === 'bags' ? 'Bags' : 'MT';
+  const matTypeLabel = MAT_TYPES.find(m => m.key === matType)?.label ?? matType;
 
   if (isError) {
     return <p className="text-sm text-red-500 text-center py-8">Failed to load location summary.</p>;
@@ -156,45 +298,84 @@ export function LocationSummaryView() {
   return (
     <div className="flex flex-col gap-6">
 
-      {/* Material type selector */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs font-semibold text-gray-500 uppercase tracking-widest">Material Type</span>
-        <div className="flex bg-gray-100 rounded-xl p-1 gap-1">
-          {MAT_TYPES.map(({ key, label }) => (
-            <button
-              key={key}
-              onClick={() => setMatType(key)}
-              className={cn(
-                'px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150',
-                matType === key ? 'bg-[#1D4E6B] text-white shadow-sm' : 'text-gray-500 hover:text-gray-800',
-              )}
-            >
-              {label}
-            </button>
-          ))}
+      {/* Filters + export */}
+      <div className="flex items-center gap-4 flex-wrap justify-between">
+        <div className="flex items-center gap-4 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-semibold text-gray-500 uppercase tracking-widest">Material Type</span>
+            <div className="flex bg-gray-100 rounded-xl p-1 gap-1">
+              {MAT_TYPES.map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => setMatType(key)}
+                  className={cn(
+                    'px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150',
+                    matType === key ? 'bg-[#1D4E6B] text-white shadow-sm' : 'text-gray-500 hover:text-gray-800',
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-semibold text-gray-500 uppercase tracking-widest">Unit</span>
+            <div className="flex bg-gray-100 rounded-xl p-1 gap-1">
+              {(['MT', 'bags'] as DisplayUnit[]).map(u => (
+                <button
+                  key={u}
+                  onClick={() => setUnit(u)}
+                  className={cn(
+                    'px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150',
+                    unit === u ? 'bg-[#1D4E6B] text-white shadow-sm' : 'text-gray-500 hover:text-gray-800',
+                  )}
+                >
+                  {u === 'bags' ? 'Bags' : 'MT'}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
+
+        {data && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => exportCsv(data, activeBrands, unitLabel, convert)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border bg-white text-gray-600 border-gray-200 hover:bg-gray-50 transition-all"
+            >
+              <Download size={12} /> CSV
+            </button>
+            <button
+              onClick={() => exportPdf(data, activeBrands, unitLabel, convert, matTypeLabel)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border bg-white text-gray-600 border-gray-200 hover:bg-gray-50 transition-all"
+            >
+              <FileText size={12} /> PDF
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Stock table */}
       <SummaryTable
-        title="Warehouse Floor Stock (MT)"
+        title={`Warehouse Floor Stock (${unitLabel})`}
         locations={data?.locations ?? []}
-        totals={data?.totals ?? { location_id: '', location_label: '', brands: {}, total_stock: 0, total_dispatch: 0, inventory_days: null }}
+        totals={data?.totals ?? EMPTY_ROW}
         activeBrands={activeBrands}
-        getValue={(row, bid) => row.brands[bid]?.stock ?? 0}
-        getTotalValue={row => row.total_stock}
+        getValue={(row, bid) => convert(row.brands[bid]?.stock ?? 0)}
+        getTotalValue={row => convert(row.total_stock)}
         highlightZero={(row, bid) => (row.brands[bid]?.stock ?? 0) === 0 && (row.brands[bid]?.dispatch ?? 0) > 0}
         isLoading={isLoading}
       />
 
       {/* Dispatch table */}
       <SummaryTable
-        title="Dispatch — Period (MT)"
+        title={`Dispatch — Period (${unitLabel})`}
         locations={data?.locations ?? []}
-        totals={data?.totals ?? { location_id: '', location_label: '', brands: {}, total_stock: 0, total_dispatch: 0, inventory_days: null }}
+        totals={data?.totals ?? EMPTY_ROW}
         activeBrands={activeBrands}
-        getValue={(row, bid) => row.brands[bid]?.dispatch ?? 0}
-        getTotalValue={row => row.total_dispatch}
+        getValue={(row, bid) => convert(row.brands[bid]?.dispatch ?? 0)}
+        getTotalValue={row => convert(row.total_dispatch)}
         highlightZero={() => false}
         isLoading={isLoading}
       />

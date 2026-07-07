@@ -85,6 +85,8 @@ class PlantInventoryRow(BaseModel):
     in_transit_out_mt: float   # BV + VN + Stock Transfer (factory dispatched)
     in_transit_in_mt:  float   # BV + ZU + Stock Transfer (depot received)
     status:            str     # "ok" | "low" | "out" | "no_threshold"
+    low_count:         int = 0  # materials at this plant that are 0 < stock < threshold
+    out_count:         int = 0  # materials at this plant that are stock <= 0 (with a threshold set)
 
 
 class InventorySummarySchema(BaseModel):
@@ -162,6 +164,7 @@ class BrandGroupStockSchema(BaseModel):
 class LocationSummaryRow(BaseModel):
     location_id:    str
     location_label: str
+    plant_ids:      list[str] = []  # constituent plant IDs this location groups together
     brands:         dict[str, BrandGroupStockSchema]  # keyed by brand_id
     total_stock:    float
     total_dispatch: float

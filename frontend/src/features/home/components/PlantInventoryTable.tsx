@@ -21,16 +21,26 @@ interface Props {
 
 // ── Status pill ───────────────────────────────────────────────────────────────
 
-function StatusPill({ status }: { status: string }) {
-  const map: Record<string, { label: string; cls: string }> = {
-    ok:  { label: '● OK',   cls: 'bg-green-100 text-green-700' },
-    low: { label: '⚠ Low', cls: 'bg-amber-100 text-amber-700' },
-    out: { label: '✕ Out', cls: 'bg-red-100   text-red-700'   },
-  };
-  const { label, cls } = map[status] ?? map.ok;
+function StatusPill({ status, lowCount, outCount }: { status: string; lowCount: number; outCount: number }) {
+  if (status !== 'ok' && (lowCount > 0 || outCount > 0)) {
+    return (
+      <span className="inline-flex items-center gap-1">
+        {outCount > 0 && (
+          <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-red-100 text-red-700">
+            ✕ {outCount} Out
+          </span>
+        )}
+        {lowCount > 0 && (
+          <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-amber-100 text-amber-700">
+            ⚠ {lowCount} Low
+          </span>
+        )}
+      </span>
+    );
+  }
   return (
-    <span className={cn('text-[10px] font-bold px-2.5 py-1 rounded-full', cls)}>
-      {label}
+    <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-green-100 text-green-700">
+      ● OK
     </span>
   );
 }
@@ -566,7 +576,7 @@ export function PlantInventoryTable({ summary, isLoading, unitScale, zeroStockMo
                     : '—'}
                 </td>
                 <td className="px-4 py-3">
-                  <StatusPill status={row.status} />
+                  <StatusPill status={row.status} lowCount={row.low_count} outCount={row.out_count} />
                 </td>
               </tr>
             ))}
