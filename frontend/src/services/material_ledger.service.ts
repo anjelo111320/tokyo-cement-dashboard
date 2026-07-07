@@ -80,10 +80,18 @@ export const materialLedgerService = {
     return res.data.data;
   },
 
-  async getLocationSummary(includeBags = true, includeBulk = false): Promise<LocationSummary> {
-    const res = await apiClient.get<ApiResponse<LocationSummary>>('/material-ledger/location-summary', {
-      params: { include_bags: includeBags, include_bulk: includeBulk },
-    });
+  async getLocationSummary(
+    includeBags = true,
+    includeBulk = false,
+    plantIds?: string[],
+    activeOnly = false,
+  ): Promise<LocationSummary> {
+    const params = new URLSearchParams();
+    params.set('include_bags', String(includeBags));
+    params.set('include_bulk', String(includeBulk));
+    plantIds?.forEach(id => params.append('plant_id', id));
+    if (activeOnly) params.set('active_only', 'true');
+    const res = await apiClient.get<ApiResponse<LocationSummary>>('/material-ledger/location-summary', { params });
     return res.data.data;
   },
 

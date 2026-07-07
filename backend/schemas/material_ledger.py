@@ -162,9 +162,9 @@ class BrandGroupStockSchema(BaseModel):
 
 
 class LocationSummaryRow(BaseModel):
-    location_id:    str
-    location_label: str
-    plant_ids:      list[str] = []  # constituent plant IDs this location groups together
+    plant_id:       str
+    plant_name:     str
+    city:           Optional[str] = None
     brands:         dict[str, BrandGroupStockSchema]  # keyed by brand_id
     total_stock:    float
     total_dispatch: float
@@ -174,7 +174,7 @@ class LocationSummaryRow(BaseModel):
 class BrandGroupMetaSchema(BaseModel):
     id:       str
     label:    str
-    has_data: bool  # True if any location has non-zero stock or dispatch
+    has_data: bool  # True if any plant has non-zero stock or dispatch
 
 
 class LocationSummarySchema(BaseModel):

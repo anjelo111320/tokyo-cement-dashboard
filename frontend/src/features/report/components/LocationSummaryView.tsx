@@ -2,14 +2,16 @@ import { useState } from 'react';
 import { Download, FileText } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { useLocationSummary } from '@/features/material_ledger/hooks/useLedger';
+import { useLocationSummary, useLedgerPlants } from '@/features/material_ledger/hooks/useLedger';
 import { useSettingsStore } from '@/hooks/useSettingsStore';
+import { MultiPlantPicker } from '@/features/home/components/MultiPlantPicker';
 import { Skeleton } from '@/components/common/LoadingSkeleton';
 import { cn } from '@/utils/cn';
 import type { LocationSummary, LocationSummaryRow, BrandGroupMeta } from '@/types/material_ledger.types';
 
 type MaterialType = 'bags' | 'bulk' | 'all';
 type DisplayUnit  = 'MT' | 'bags';
+type ExportScope  = 'stock' | 'dispatch' | 'both';
 
 function fmt(n: number): string {
   if (n === 0) return '—';
@@ -22,8 +24,14 @@ const MAT_TYPES: { key: MaterialType; label: string }[] = [
   { key: 'all',  label: 'All'       },
 ];
 
+const EXPORT_SCOPES: { key: ExportScope; label: string }[] = [
+  { key: 'stock',    label: 'Floor Stock only' },
+  { key: 'dispatch', label: 'Dispatch only'    },
+  { key: 'both',     label: 'Both tables'      },
+];
+
 const EMPTY_ROW: LocationSummaryRow = {
-  location_id: '', location_label: '', plant_ids: [], brands: {},
+  plant_id: '', plant_name: '', city: null, brands: {},
   total_stock: 0, total_dispatch: 0, inventory_days: null,
 };
 
@@ -51,10 +59,10 @@ function buildSectionRows(
   getTotalValue: (row: LocationSummaryRow) => number,
   convert: (mt: number) => number,
 ): { head: string[]; body: string[][] } {
-  const head = ['Location', 'Plant IDs', ...activeBrands.map(b => b.label), 'Total'];
+  const head = ['Plant ID', 'Plant Name', ...activeBrands.map(b => b.label), 'Total'];
   const body = data.locations.map(row => [
-    row.location_label,
-    row.plant_ids.join(' '),
+    row.plant_id,
+    row.plant_name,
     ...activeBrands.map(b => String(convert(getValue(row, b.id)))),
     String(convert(getTotalValue(row))),
   ]);
@@ -67,28 +75,32 @@ function buildSectionRows(
   return { head, body };
 }
 
+const SECTIONS: { key: 'stock' | 'dispatch'; title: string; getValue: (row: LocationSummaryRow, bid: string) => number; getTotal: (row: LocationSummaryRow) => number }[] = [
+  { key: 'stock',    title: 'Warehouse Floor Stock', getValue: (r, bid) => r.brands[bid]?.stock ?? 0,    getTotal: r => r.total_stock },
+  { key: 'dispatch', title: 'Dispatch - Period',      getValue: (r, bid) => r.brands[bid]?.dispatch ?? 0, getTotal: r => r.total_dispatch },
+];
+
+function sectionsForScope(scope: ExportScope) {
+  if (scope === 'both') return SECTIONS;
+  return SECTIONS.filter(s => s.key === scope);
+}
+
 function exportCsv(
   data: LocationSummary,
   activeBrands: BrandGroupMeta[],
   unitLabel: string,
   convert: (mt: number) => number,
+  scope: ExportScope,
 ): void {
   const lines: string[] = [];
 
-  function appendSection(
-    title: string,
-    getValue: (row: LocationSummaryRow, bid: string) => number,
-    getTotal: (row: LocationSummaryRow) => number,
-  ) {
+  sectionsForScope(scope).forEach(({ title, getValue, getTotal }) => {
     const { head, body } = buildSectionRows(data, activeBrands, getValue, getTotal, convert);
     lines.push(csvField(`${title} (${unitLabel})`));
     lines.push(head.map(csvField).join(','));
     body.forEach(r => lines.push(r.map(csvField).join(',')));
     lines.push('');
-  }
-
-  appendSection('Warehouse Floor Stock', (r, bid) => r.brands[bid]?.stock ?? 0, r => r.total_stock);
-  appendSection('Dispatch - Period',     (r, bid) => r.brands[bid]?.dispatch ?? 0, r => r.total_dispatch);
+  });
 
   const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
   downloadBlob(blob, `location-summary-${new Date().toISOString().slice(0, 10)}.csv`);
@@ -100,6 +112,7 @@ function exportPdf(
   unitLabel: string,
   convert: (mt: number) => number,
   matTypeLabel: string,
+  scope: ExportScope,
 ): void {
   const doc = new jsPDF({ orientation: 'landscape' });
 
@@ -110,17 +123,13 @@ function exportPdf(
   doc.text(`Material type: ${matTypeLabel} · Unit: ${unitLabel} · Generated ${new Date().toLocaleString()}`, 14, 20);
   doc.setTextColor(0);
 
-  function appendSection(
-    startY: number,
-    title: string,
-    getValue: (row: LocationSummaryRow, bid: string) => number,
-    getTotal: (row: LocationSummaryRow) => number,
-  ): number {
+  let y = 28;
+  sectionsForScope(scope).forEach(({ title, getValue, getTotal }) => {
     const { head, body } = buildSectionRows(data, activeBrands, getValue, getTotal, convert);
     doc.setFontSize(11);
-    doc.text(`${title} (${unitLabel})`, 14, startY);
+    doc.text(`${title} (${unitLabel})`, 14, y);
     autoTable(doc, {
-      startY: startY + 3,
+      startY: y + 3,
       head: [head],
       body,
       styles: { fontSize: 7 },
@@ -128,13 +137,54 @@ function exportPdf(
       margin: { left: 14, right: 14 },
     });
     const withTable = doc as unknown as { lastAutoTable: { finalY: number } };
-    return withTable.lastAutoTable.finalY + 12;
-  }
-
-  const nextY = appendSection(28, 'Warehouse Floor Stock', (r, bid) => r.brands[bid]?.stock ?? 0, r => r.total_stock);
-  appendSection(nextY, 'Dispatch - Period', (r, bid) => r.brands[bid]?.dispatch ?? 0, r => r.total_dispatch);
+    y = withTable.lastAutoTable.finalY + 12;
+  });
 
   doc.save(`location-summary-${new Date().toISOString().slice(0, 10)}.pdf`);
+}
+
+// ── Export button with scope prompt ─────────────────────────────────────────
+
+function ExportButton({
+  icon,
+  label,
+  onPick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onPick: (scope: ExportScope) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border bg-white text-gray-600 border-gray-200 hover:bg-gray-50 transition-all"
+      >
+        {icon} {label}
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-full mt-1 z-50 bg-white border border-gray-200 rounded-xl shadow-xl w-44 overflow-hidden">
+            <p className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-gray-400 border-b border-gray-100">
+              Include which table?
+            </p>
+            {EXPORT_SCOPES.map(({ key, label: scopeLabel }) => (
+              <button
+                key={key}
+                onClick={() => { onPick(key); setOpen(false); }}
+                className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                {scopeLabel}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
 // ── Table ─────────────────────────────────────────────────────────────────────
@@ -166,7 +216,7 @@ function SummaryTable({
           <thead className="bg-[#0D1F2D] text-white">
             <tr>
               <th className="sticky left-0 z-10 bg-[#0D1F2D] px-4 py-3 text-left text-[11px] font-bold uppercase tracking-widest whitespace-nowrap min-w-50 border-r border-[#1B3550]">
-                Location
+                Plant
               </th>
               {isLoading
                 ? Array.from({ length: 5 }).map((_, i) => (
@@ -203,20 +253,25 @@ function SummaryTable({
                     ))}
                   </tr>
                 ))
+              : locations.length === 0 ? (
+                  <tr>
+                    <td colSpan={activeBrands.length + 2} className="px-4 py-6 text-center text-xs text-gray-400">
+                      No plants match your filters
+                    </td>
+                  </tr>
+                )
               : locations.map((row, i) => {
                   const rowBg = i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50';
                   return (
-                    <tr key={row.location_id} className={cn('hover:bg-blue-50/30 transition-colors', rowBg)}>
+                    <tr key={row.plant_id} className={cn('hover:bg-blue-50/30 transition-colors', rowBg)}>
                       <td className={cn(
                         'sticky left-0 z-10 px-4 py-2.5 text-xs font-semibold text-gray-900 whitespace-nowrap border-r border-gray-100',
                         rowBg,
                       )}>
-                        {row.location_label}
-                        {row.plant_ids.length > 0 && (
-                          <p className="text-[9px] font-mono font-normal text-gray-400 mt-0.5">
-                            {row.plant_ids.join(', ')}
-                          </p>
-                        )}
+                        {row.plant_name}
+                        <p className="text-[9px] font-mono font-normal text-gray-400 mt-0.5">
+                          {row.plant_id}{row.city ? ` · ${row.city}` : ''}
+                        </p>
                       </td>
                       {activeBrands.map(b => {
                         const v     = getValue(row, b.id);
@@ -269,14 +324,17 @@ function SummaryTable({
 // ── Main view ─────────────────────────────────────────────────────────────────
 
 export function LocationSummaryView() {
-  const [matType, setMatType] = useState<MaterialType>('bags');
-  const [unit,    setUnit]    = useState<DisplayUnit>('MT');
+  const [matType,        setMatType]        = useState<MaterialType>('bags');
+  const [unit,           setUnit]           = useState<DisplayUnit>('MT');
+  const [selectedPlants, setSelectedPlants] = useState<string[]>([]);
+  const [activeOnly,     setActiveOnly]     = useState(false);
   const { allUnitScales } = useSettingsStore();
+  const { data: plants = [] } = useLedgerPlants();
 
   const includeBags = matType === 'bags' || matType === 'all';
   const includeBulk = matType === 'bulk' || matType === 'all';
 
-  const { data, isLoading, isError } = useLocationSummary(includeBags, includeBulk);
+  const { data, isLoading, isError } = useLocationSummary(includeBags, includeBulk, selectedPlants, activeOnly);
 
   // Every admin-configured brand group always shows as a column now, even
   // ones with no data under the current material-type filter.
@@ -299,61 +357,78 @@ export function LocationSummaryView() {
     <div className="flex flex-col gap-6">
 
       {/* Filters + export */}
-      <div className="flex items-center gap-4 flex-wrap justify-between">
-        <div className="flex items-center gap-4 flex-wrap">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-semibold text-gray-500 uppercase tracking-widest">Material Type</span>
-            <div className="flex bg-gray-100 rounded-xl p-1 gap-1">
-              {MAT_TYPES.map(({ key, label }) => (
-                <button
-                  key={key}
-                  onClick={() => setMatType(key)}
-                  className={cn(
-                    'px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150',
-                    matType === key ? 'bg-[#1D4E6B] text-white shadow-sm' : 'text-gray-500 hover:text-gray-800',
-                  )}
-                >
-                  {label}
-                </button>
-              ))}
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center gap-4 flex-wrap justify-between">
+          <div className="flex items-center gap-4 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-semibold text-gray-500 uppercase tracking-widest">Material Type</span>
+              <div className="flex bg-gray-100 rounded-xl p-1 gap-1">
+                {MAT_TYPES.map(({ key, label }) => (
+                  <button
+                    key={key}
+                    onClick={() => setMatType(key)}
+                    className={cn(
+                      'px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150',
+                      matType === key ? 'bg-[#1D4E6B] text-white shadow-sm' : 'text-gray-500 hover:text-gray-800',
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-semibold text-gray-500 uppercase tracking-widest">Unit</span>
+              <div className="flex bg-gray-100 rounded-xl p-1 gap-1">
+                {(['MT', 'bags'] as DisplayUnit[]).map(u => (
+                  <button
+                    key={u}
+                    onClick={() => setUnit(u)}
+                    className={cn(
+                      'px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150',
+                      unit === u ? 'bg-[#1D4E6B] text-white shadow-sm' : 'text-gray-500 hover:text-gray-800',
+                    )}
+                  >
+                    {u === 'bags' ? 'Bags' : 'MT'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <button
+              onClick={() => setActiveOnly(v => !v)}
+              className={cn(
+                'px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all',
+                activeOnly
+                  ? 'bg-[#1B3550] text-white border-[#1B3550]'
+                  : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200',
+              )}
+            >
+              {activeOnly ? 'Active materials only ✓' : 'Active materials only'}
+            </button>
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-semibold text-gray-500 uppercase tracking-widest">Unit</span>
-            <div className="flex bg-gray-100 rounded-xl p-1 gap-1">
-              {(['MT', 'bags'] as DisplayUnit[]).map(u => (
-                <button
-                  key={u}
-                  onClick={() => setUnit(u)}
-                  className={cn(
-                    'px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150',
-                    unit === u ? 'bg-[#1D4E6B] text-white shadow-sm' : 'text-gray-500 hover:text-gray-800',
-                  )}
-                >
-                  {u === 'bags' ? 'Bags' : 'MT'}
-                </button>
-              ))}
+          {data && (
+            <div className="flex items-center gap-2">
+              <ExportButton
+                icon={<Download size={12} />}
+                label="CSV"
+                onPick={scope => exportCsv(data, activeBrands, unitLabel, convert, scope)}
+              />
+              <ExportButton
+                icon={<FileText size={12} />}
+                label="PDF"
+                onPick={scope => exportPdf(data, activeBrands, unitLabel, convert, matTypeLabel, scope)}
+              />
             </div>
-          </div>
+          )}
         </div>
 
-        {data && (
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => exportCsv(data, activeBrands, unitLabel, convert)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border bg-white text-gray-600 border-gray-200 hover:bg-gray-50 transition-all"
-            >
-              <Download size={12} /> CSV
-            </button>
-            <button
-              onClick={() => exportPdf(data, activeBrands, unitLabel, convert, matTypeLabel)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border bg-white text-gray-600 border-gray-200 hover:bg-gray-50 transition-all"
-            >
-              <FileText size={12} /> PDF
-            </button>
-          </div>
-        )}
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-widest shrink-0">Plants</span>
+          <MultiPlantPicker plants={plants} selected={selectedPlants} onChange={setSelectedPlants} />
+        </div>
       </div>
 
       {/* Stock table */}

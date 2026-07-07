@@ -236,9 +236,11 @@ async def get_inventory_report(
 async def get_location_summary(
     include_bags: bool = Query(True,  description="Include 50 kg bag materials"),
     include_bulk: bool = Query(False, description="Include bulk materials"),
+    plant_id:     list[str] = Query(default=[], description="Plant IDs to filter (repeatable); omit for all plants"),
+    active_only:  bool = Query(False, description="Exclude materials with zero stock/dispatch/transit"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Brand × location grid: floor stock, period dispatch, and (if CSV has date column) inventory days."""
+    """Brand × plant grid: floor stock, period dispatch, and (if CSV has date column) inventory days."""
     bg_result = await db.execute(sa_select(BrandGroup).order_by(BrandGroup.sort_order))
     brand_groups = [{"id": b.id, "label": b.label} for b in bg_result.scalars().all()]
 
@@ -250,6 +252,8 @@ async def get_location_summary(
         material_brand_map=material_brand_map,
         include_bags=include_bags,
         include_bulk=include_bulk,
+        plant_ids=plant_id or None,
+        active_only=active_only,
     ))
 
 

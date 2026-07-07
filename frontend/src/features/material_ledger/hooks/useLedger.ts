@@ -58,10 +58,10 @@ export function useLedgerPlants() {
   });
 }
 
-export function useLocationSummary(includeBags = true, includeBulk = false) {
+export function useLocationSummary(includeBags = true, includeBulk = false, plantIds?: string[], activeOnly = false) {
   return useQuery({
-    queryKey: queryKeys.location.locationSummary(includeBags, includeBulk),
-    queryFn: () => materialLedgerService.getLocationSummary(includeBags, includeBulk),
+    queryKey: queryKeys.location.locationSummary(includeBags, includeBulk, plantIds, activeOnly),
+    queryFn: () => materialLedgerService.getLocationSummary(includeBags, includeBulk, plantIds, activeOnly),
     staleTime: 5 * 60_000,
   });
 }

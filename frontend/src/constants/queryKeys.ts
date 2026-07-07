@@ -28,8 +28,8 @@ export const queryKeys = {
   },
 
   location: {
-    locationSummary: (includeBags: boolean, includeBulk: boolean) =>
-      ['location', 'summary', includeBags, includeBulk] as const,
+    locationSummary: (includeBags: boolean, includeBulk: boolean, plantIds?: string[], activeOnly?: boolean) =>
+      ['location', 'summary', includeBags, includeBulk, plantIds?.join(',') ?? 'all', activeOnly ?? false] as const,
   },
 
   settings: {

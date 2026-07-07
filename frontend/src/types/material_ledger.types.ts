@@ -147,9 +147,9 @@ export interface BrandGroupStock {
 }
 
 export interface LocationSummaryRow {
-  location_id:    string;
-  location_label: string;
-  plant_ids:      string[];
+  plant_id:       string;
+  plant_name:     string;
+  city:           string | null;
   brands:         Record<string, BrandGroupStock>;
   total_stock:    number;
   total_dispatch: number;

@@ -56,24 +56,6 @@ from backend.schemas.material_ledger import (
 from backend.core.material_ledger_config import MATERIAL_THRESHOLDS as _thresholds_store
 
 
-# ── Location → plant ID groups ─────────────────────────────────────────────────
-_LOCATION_GROUPS: list[dict] = [
-    {"id": "PCW",              "primary": "2140", "plant_ids": {"2140", "2120", "2143"}},
-    {"id": "RCW",              "primary": "2141", "plant_ids": {"2141", "2121", "2145", "2125"}},
-    {"id": "ELC_Colombo",      "primary": "2110", "plant_ids": {"2110", "2126", "2146"}},
-    {"id": "ELC_Kurunegala",   "primary": "2111", "plant_ids": {"2111"}},
-    {"id": "ELC_Trincomalee",  "primary": "2112", "plant_ids": {"2112", "2142"}},
-    {"id": "ELC_Kelaniya",     "primary": "2113", "plant_ids": {"2113"}},
-    {"id": "ELC_Kadawatha",    "primary": "2114", "plant_ids": {"2114", "2129"}},
-    {"id": "ELC_Nuwara_Eliya", "primary": "2116", "plant_ids": {"2116"}},
-    {"id": "ELC_Piliyandala",  "primary": "2115", "plant_ids": {"2115"}},
-    {"id": "ELC_Hambantota",   "primary": "2117", "plant_ids": {"2117", "2127"}},
-    {"id": "ELC_Kandy",        "primary": "2118", "plant_ids": {"2118"}},
-    {"id": "Watagoda_3RC",     "primary": "2130", "plant_ids": {"2130"}},
-    {"id": "ELC_Badulla",      "primary": "2119", "plant_ids": {"2119"}},
-]
-
-
 def _classify_brand(desc: str) -> Optional[str]:
     """Best-effort default brand group for a newly-discovered material (CSV
     auto-sync). The persisted, admin-editable Material.brand_group field is
@@ -634,9 +616,13 @@ class MaterialLedgerService:
         material_brand_map: dict[str, Optional[str]],
         include_bags: bool = True,
         include_bulk: bool = False,
+        plant_ids: Optional[list[str]] = None,
+        active_only: bool = False,
     ) -> LocationSummarySchema:
         """
-        Brand × Location aggregation grid.
+        Brand × Plant aggregation grid — one row per individual plant (no more
+        merged multi-plant "location" grouping; see git history pre-2026-07 for
+        that version, which hid 7 plants that weren't in the old mapping).
 
         brand_groups: DB-backed list of {"id", "label"} — the admin-managed
         source of truth (see api/v1/admin.py brand-groups endpoints), replacing
@@ -646,6 +632,10 @@ class MaterialLedgerService:
         from the description via _classify_brand() on every request — this way
         an admin's manual brand_group edit in the Materials tab is reflected
         here immediately.
+        plant_ids: restrict to this subset of plants; None/empty means all.
+        active_only: exclude materials with zero stock, dispatch, and transit
+        across the (plant- and material-type-filtered) dataset entirely, rather
+        than just zeroing out their cells.
 
         Stock    = CA/EB closing balance rows
         Dispatch = BV/VN Sales Order rows (period total)
@@ -654,34 +644,15 @@ class MaterialLedgerService:
         """
         from backend.repositories.csv.csv_base import csv_cache
 
+        plant_filter = plant_ids if plant_ids else None
+
         # ── Date detection ──────────────────────────────────────────────────────
         raw_df = csv_cache.get("material_ledger")
         date_col_candidates = ["Posting Date", "Document Date", "Date", "posting_date", "date"]
         date_col = next((c for c in date_col_candidates if raw_df is not None and c in raw_df.columns), None)
         has_date_data = date_col is not None
 
-        # ── Plant name lookup → derive location labels from plant master ────────
-        plant_name_map: dict[str, str] = {
-            p.plant_id: p.name for p in self._plants.get_all_plants()
-        }
-
-        def _loc_label(group: dict) -> str:
-            return plant_name_map.get(group["primary"], group["id"])
-
-        # ── Plant → location index ──────────────────────────────────────────────
-        plant_to_loc: dict[str, str] = {}
-        for loc in _LOCATION_GROUPS:
-            for pid in loc["plant_ids"]:
-                plant_to_loc[pid] = loc["id"]
-
-        BK = tuple  # (loc_id, brand_id)
-        stock_acc:    dict[tuple, float] = {}
-        dispatch_acc: dict[tuple, float] = {}
-        transit_acc:  dict[tuple, float] = {}
-
-        def _add(acc: dict, loc_id: str, brand_id: str, qty: float) -> None:
-            k = (loc_id, brand_id)
-            acc[k] = acc.get(k, 0.0) + qty
+        plant_masters = {p.plant_id: p for p in self._plants.get_all_plants()}
 
         def _should_include(desc: str) -> bool:
             if include_bags and include_bulk:
@@ -692,39 +663,51 @@ class MaterialLedgerService:
                 return _material_is_bulk(desc)
             return False
 
-        # ── Floor stock (CA/EB) ─────────────────────────────────────────────────
-        for m in self._ledger.get_movements(obj_type="CA", category="EB"):
-            loc_id   = plant_to_loc.get(m.plant_id)
-            brand_id = material_brand_map.get(m.material_id)
-            if not loc_id or not brand_id:
-                continue
-            if not _should_include(m.material_description):
-                continue
-            _add(stock_acc, loc_id, brand_id, m.quantity)
+        def _relevant(m) -> bool:
+            return bool(material_brand_map.get(m.material_id)) and _should_include(m.material_description)
 
-        # ── Dispatch (BV/VN Sales Order) ─────────────────────────────────────────
-        for m in self._ledger.get_movements(obj_type="BV", category="VN"):
-            if m.proc_cat_name != "Sales Order":
-                continue
-            loc_id   = plant_to_loc.get(m.plant_id)
-            brand_id = material_brand_map.get(m.material_id)
-            if not loc_id or not brand_id:
-                continue
-            if not _should_include(m.material_description):
-                continue
-            _add(dispatch_acc, loc_id, brand_id, m.quantity)
+        eb_movements = [
+            m for m in self._ledger.get_movements(obj_type="CA", category="EB", plant_ids=plant_filter)
+            if _relevant(m)
+        ]
+        vn_movements = [
+            m for m in self._ledger.get_movements(obj_type="BV", category="VN", plant_ids=plant_filter)
+            if m.proc_cat_name == "Sales Order" and _relevant(m)
+        ]
+        zu_movements = [
+            m for m in self._ledger.get_movements(obj_type="BV", category="ZU", plant_ids=plant_filter)
+            if m.proc_cat_name == "Stock Transfer" and _relevant(m)
+        ]
 
-        # ── In-transit incoming (BV/ZU Stock Transfer) ──────────────────────────
-        for m in self._ledger.get_movements(obj_type="BV", category="ZU"):
-            if m.proc_cat_name != "Stock Transfer":
-                continue
-            loc_id   = plant_to_loc.get(m.plant_id)
-            brand_id = material_brand_map.get(m.material_id)
-            if not loc_id or not brand_id:
-                continue
-            if not _should_include(m.material_description):
-                continue
-            _add(transit_acc, loc_id, brand_id, m.quantity)
+        # ── Active-material filter — computed on the plant/material-type-filtered
+        # universe above, then applied to exclude those materials entirely ──────
+        if active_only:
+            active_material_ids: set[str] = set()
+            for m in eb_movements + vn_movements + zu_movements:
+                if m.quantity != 0:
+                    active_material_ids.add(m.material_id)
+            eb_movements = [m for m in eb_movements if m.material_id in active_material_ids]
+            vn_movements = [m for m in vn_movements if m.material_id in active_material_ids]
+            zu_movements = [m for m in zu_movements if m.material_id in active_material_ids]
+
+        stock_acc:    dict[tuple, float] = {}
+        dispatch_acc: dict[tuple, float] = {}
+        transit_acc:  dict[tuple, float] = {}
+
+        def _add(acc: dict, pid: str, brand_id: str, qty: float) -> None:
+            k = (pid, brand_id)
+            acc[k] = acc.get(k, 0.0) + qty
+
+        plant_ids_seen: set[str] = set()
+        for m in eb_movements:
+            _add(stock_acc, m.plant_id, material_brand_map[m.material_id], m.quantity)
+            plant_ids_seen.add(m.plant_id)
+        for m in vn_movements:
+            _add(dispatch_acc, m.plant_id, material_brand_map[m.material_id], m.quantity)
+            plant_ids_seen.add(m.plant_id)
+        for m in zu_movements:
+            _add(transit_acc, m.plant_id, material_brand_map[m.material_id], m.quantity)
+            plant_ids_seen.add(m.plant_id)
 
         # ── Date-based inventory days ────────────────────────────────────────────
         # Placeholder: when has_date_data is True we can compute per-day dispatch
@@ -734,67 +717,67 @@ class MaterialLedgerService:
         if has_date_data and date_col:
             pass  # future: parse date_col, group dispatch by date, compute avg
 
-        def _inv_days(loc_id: str) -> Optional[float]:
+        def _inv_days(pid: str) -> Optional[float]:
             if not has_date_data or daily_dispatch_map is None:
                 return None
             total_daily = sum(
-                daily_dispatch_map.get((loc_id, bid), 0.0)
+                daily_dispatch_map.get((pid, bid), 0.0)
                 for bid in [b["id"] for b in brand_groups]
             )
             if total_daily <= 0:
                 return None
             total_stock = sum(
-                stock_acc.get((loc_id, bid), 0.0)
+                stock_acc.get((pid, bid), 0.0)
                 for bid in [b["id"] for b in brand_groups]
             )
             return round(total_stock / total_daily, 1)
 
-        # ── Assemble location rows ───────────────────────────────────────────────
+        # ── Assemble plant rows ──────────────────────────────────────────────────
         brand_ids = [b["id"] for b in brand_groups]
         rows: list[LocationSummaryRow] = []
         brands_with_data: set[str] = set()
 
-        for loc in _LOCATION_GROUPS:
-            lid = loc["id"]
+        for pid in sorted(plant_ids_seen):
+            pm = plant_masters.get(pid)
             brands: dict[str, BrandGroupStockSchema] = {}
             tot_stock = 0.0
             tot_disp  = 0.0
 
             for bid in brand_ids:
-                s = round(stock_acc.get((lid, bid), 0.0), 3)
-                d = round(dispatch_acc.get((lid, bid), 0.0), 3)
-                t = round(transit_acc.get((lid, bid), 0.0), 3)
+                s = round(stock_acc.get((pid, bid), 0.0), 3)
+                d = round(dispatch_acc.get((pid, bid), 0.0), 3)
+                t = round(transit_acc.get((pid, bid), 0.0), 3)
                 brands[bid] = BrandGroupStockSchema(stock=s, dispatch=d, transit_in=t)
                 if s != 0 or d != 0:
                     brands_with_data.add(bid)
                 tot_stock += s
                 tot_disp  += d
 
-            # Skip locations with no stock and no dispatch in this CSV
+            # Skip plants with no stock and no dispatch in this CSV
             if tot_stock == 0 and tot_disp == 0:
                 continue
 
             rows.append(LocationSummaryRow(
-                location_id=lid,
-                location_label=_loc_label(loc),
-                plant_ids=sorted(loc["plant_ids"]),
+                plant_id=pid,
+                plant_name=pm.name if pm else f"Plant {pid}",
+                city=pm.city if pm else None,
                 brands=brands,
                 total_stock=round(tot_stock, 3),
                 total_dispatch=round(tot_disp, 3),
-                inventory_days=_inv_days(lid),
+                inventory_days=_inv_days(pid),
             ))
 
         # ── Totals row ───────────────────────────────────────────────────────────
         total_brands: dict[str, BrandGroupStockSchema] = {}
         for bid in brand_ids:
             total_brands[bid] = BrandGroupStockSchema(
-                stock=round(sum(stock_acc.get((loc["id"], bid), 0.0) for loc in _LOCATION_GROUPS), 3),
-                dispatch=round(sum(dispatch_acc.get((loc["id"], bid), 0.0) for loc in _LOCATION_GROUPS), 3),
-                transit_in=round(sum(transit_acc.get((loc["id"], bid), 0.0) for loc in _LOCATION_GROUPS), 3),
+                stock=round(sum(stock_acc.get((pid, bid), 0.0) for pid in plant_ids_seen), 3),
+                dispatch=round(sum(dispatch_acc.get((pid, bid), 0.0) for pid in plant_ids_seen), 3),
+                transit_in=round(sum(transit_acc.get((pid, bid), 0.0) for pid in plant_ids_seen), 3),
             )
         totals_row = LocationSummaryRow(
-            location_id="__total__",
-            location_label="Total",
+            plant_id="__total__",
+            plant_name="Total",
             brands=total_brands,
             total_stock=round(sum(r.total_stock for r in rows), 3),
             total_dispatch=round(sum(r.total_dispatch for r in rows), 3),
