@@ -1,7 +1,8 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Map, FileBarChart2, Settings } from 'lucide-react';
+import { LayoutDashboard, Map, FileBarChart2, Settings, ShieldCheck } from 'lucide-react';
 import { ROUTES } from '@/constants/routes';
 import { cn } from '@/utils/cn';
+import { useAuth } from '@/features/auth/AuthContext';
 
 const NAV_ITEMS = [
   { to: ROUTES.HOME,     icon: LayoutDashboard, label: 'Home' },
@@ -10,7 +11,12 @@ const NAV_ITEMS = [
   { to: ROUTES.SETTINGS, icon: Settings,        label: 'Settings' },
 ];
 
+const ADMIN_NAV_ITEM = { to: ROUTES.ADMIN, icon: ShieldCheck, label: 'Admin' };
+
 export function BottomNav() {
+  const { isAdmin } = useAuth();
+  const items = isAdmin ? [...NAV_ITEMS, ADMIN_NAV_ITEM] : NAV_ITEMS;
+
   return (
     <nav
       className="fixed bottom-0 left-0 right-0 z-30 bg-white border-t border-gray-200 lg:hidden"
@@ -18,7 +24,7 @@ export function BottomNav() {
       aria-label="Mobile navigation"
     >
       <ul className="flex h-16" role="list">
-        {NAV_ITEMS.map(({ to, icon: Icon, label }) => (
+        {items.map(({ to, icon: Icon, label }) => (
           <li key={to} className="flex-1">
             <NavLink
               to={to}

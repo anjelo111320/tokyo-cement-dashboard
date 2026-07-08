@@ -8,10 +8,13 @@ from sqlalchemy import select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.auth.dependencies import require_admin, get_current_user
+from backend.core.config import settings
 from backend.db.database import get_db
 from backend.db.models.user import User
 from backend.db.models.brand_group import BrandGroup
 from backend.db.models.csv_dataset import CsvDataset
+from backend.db.models.material_threshold import MaterialThreshold
+from backend.db.models.sharepoint_config import SharePointConfig
 from backend.repositories.db import user_repo, plant_repo, settings_repo
 from backend.auth.password import hash_password
 
@@ -475,12 +478,33 @@ async def create_user(body: CreateUser, db: AsyncSession = Depends(get_db), _: U
 
 @router.put("/users/{user_id}")
 async def update_user(user_id: str, body: UpdateUser, db: AsyncSession = Depends(get_db), _: User = Depends(require_admin)):
-    import uuid
-    user = await user_repo.get_by_id(db, uuid.UUID(user_id))
+    user = await user_repo.get_by_id(db, uuid_mod.UUID(user_id))
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     updates = body.model_dump(exclude_unset=True)
     await user_repo.update(db, user, **updates)
+    return {"success": True}
+
+
+@router.delete("/users/{user_id}")
+async def delete_user(user_id: str, db: AsyncSession = Depends(get_db), _: User = Depends(require_admin)):
+    user = await user_repo.get_by_id(db, uuid_mod.UUID(user_id))
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if settings.bootstrap_admin_email and user.email == settings.bootstrap_admin_email:
+        raise HTTPException(status_code=403, detail="Cannot delete the main admin account")
+
+    # uploaded_by/updated_by are real DB-level foreign keys to users.id with no
+    # ON DELETE clause, so deleting the user would otherwise fail once any of
+    # these exist. Clear the attribution, keep the records — same pattern as
+    # the brand-group delete's auto-unassign.
+    await db.execute(sa_update(CsvDataset).where(CsvDataset.uploaded_by == user.id).values(uploaded_by=None))
+    await db.execute(sa_update(MaterialThreshold).where(MaterialThreshold.updated_by == user.id).values(updated_by=None))
+    await db.execute(sa_update(SharePointConfig).where(SharePointConfig.updated_by == user.id).values(updated_by=None))
+
+    await db.delete(user)
+    await db.commit()
     return {"success": True}
 
 

@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,6 +32,12 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 7
+
+    # ── Admin bootstrap ───────────────────────────────────────────────────────
+    # Same env var bootstrap_admin.py reads directly (see backend/scripts/) —
+    # exposed here too so the admin API can identify and protect that account
+    # from deletion. None locally, where this script is normally unused.
+    bootstrap_admin_email: Optional[str] = None
 
     # ── Auth cookies ──────────────────────────────────────────────────────────
     # Defaults suit local dev (same-site http://localhost). For a cross-site

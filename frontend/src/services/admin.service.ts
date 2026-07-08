@@ -99,6 +99,7 @@ export const adminService = {
   getUsers: () => apiClient.get<{ data: { data: AdminUser[] } }>('/admin/users').then(wrap<AdminUser[]>),
   createUser: (body: { email: string; password: string; role: string }) => apiClient.post('/admin/users', body),
   updateUser: (id: string, body: { role?: string; is_active?: boolean }) => apiClient.put(`/admin/users/${id}`, body),
+  deleteUser: (id: string) => apiClient.delete(`/admin/users/${id}`),
 
   // SharePoint
   getSharePoint: () => apiClient.get<{ data: { data: SharePointConfig | null } }>('/admin/sharepoint').then(wrap<SharePointConfig | null>),

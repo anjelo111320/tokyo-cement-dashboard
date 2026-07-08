@@ -790,6 +790,11 @@ function UsersTab() {
     mutationFn: ({ id, is_active }: { id: string; is_active: boolean }) => adminService.updateUser(id, { is_active }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'users'] }),
   });
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => adminService.deleteUser(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'users'] }),
+    onError: (e: Error) => window.alert(e.message),
+  });
 
   return (
     <div className="space-y-4 max-w-xl">
@@ -821,10 +826,24 @@ function UsersTab() {
                 {u.role}
               </span>
             </div>
-            <button onClick={() => toggleMut.mutate({ id: u.id, is_active: !u.is_active })}
-              className={cn('text-xs font-semibold transition-colors', u.is_active ? 'text-red-400 hover:text-red-600' : 'text-green-500 hover:text-green-700')}>
-              {u.is_active ? 'Deactivate' : 'Activate'}
-            </button>
+            <div className="flex items-center gap-3">
+              <button onClick={() => toggleMut.mutate({ id: u.id, is_active: !u.is_active })}
+                className={cn('text-xs font-semibold transition-colors', u.is_active ? 'text-red-400 hover:text-red-600' : 'text-green-500 hover:text-green-700')}>
+                {u.is_active ? 'Deactivate' : 'Activate'}
+              </button>
+              <button
+                onClick={() => {
+                  if (window.confirm(`Permanently delete ${u.email}?\nThis cannot be undone. Any datasets/thresholds/SharePoint settings they saved will stay, just without an owner on record.`)) {
+                    deleteMut.mutate(u.id);
+                  }
+                }}
+                disabled={deleteMut.isPending}
+                className="text-gray-300 hover:text-red-500 disabled:opacity-40 transition-colors"
+                title={`Delete ${u.email}`}
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
           </div>
         ))}
       </div>
