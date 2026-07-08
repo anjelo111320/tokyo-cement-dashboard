@@ -4,7 +4,7 @@ A production-grade inventory analytics platform for **INSEE Cement's** Sri Lanka
 
 The source data refreshes on a schedule (every 15 minutes by default), and administrators can also upload new CSV datasets on the fly, manage plant/material master data, define brand groups and thresholds, and manage users — all without a redeploy.
 
-> **A note on naming:** the running application is branded **INSEE** (sidebar logo, page titles, PWA manifest). The GitHub repository slug (`tokyo-cement-dashboard`) and some legacy strings still carry the former **Tokyo Cement** name. Treat *INSEE* as the current product name.
+> **A note on naming:** the running application is branded **INSEE** (sidebar logo, page titles, PWA manifest). The GitHub repository slug (`tokyo-cement-dashboard`) and some legacy strings still carry the former **Tokyo Cement** name. Treat _INSEE_ as the current product name.
 
 ---
 
@@ -32,33 +32,33 @@ The source data refreshes on a schedule (every 15 minutes by default), and admin
 
 ## 1. What the system does
 
-| Area | Description |
-|---|---|
-| **Home / Overview** | KPI cards (on-hand, in-transit in/out, alert count) and a per-plant inventory table, filterable by plant and material. |
-| **Map** | Interactive Leaflet map of every plant, coloured by plant type, with stock-alert bubbles and inter-plant transfer arcs. |
-| **Stock Sheet** | Two report views: **Material View** (per-material breakdown, plants as rows *or* materials as rows) and **Location Summary** (brand × location grid of floor stock and dispatch). |
-| **Settings** | Data-source status, manual CSV refresh, MT/Bags display units, and low-stock threshold editing. |
-| **Admin** (admin role only) | Manage plants, materials, brand groups, uploadable CSV datasets, users, and the SharePoint connection. |
+| Area                        | Description                                                                                                                                                                       |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Home / Overview**         | KPI cards (on-hand, in-transit in/out, alert count) and a per-plant inventory table, filterable by plant and material.                                                            |
+| **Map**                     | Interactive Leaflet map of every plant, coloured by plant type, with stock-alert bubbles and inter-plant transfer arcs.                                                           |
+| **Stock Sheet**             | Two report views: **Material View** (per-material breakdown, plants as rows _or_ materials as rows) and **Location Summary** (brand × location grid of floor stock and dispatch). |
+| **Settings**                | Data-source status, manual CSV refresh, MT/Bags display units, and low-stock threshold editing.                                                                                   |
+| **Admin** (admin role only) | Manage plants, materials, brand groups, uploadable CSV datasets, users, and the SharePoint connection.                                                                            |
 
-The core data model is the **SAP material ledger**: every row is a stock *movement* classified by an **object type** (`CA`, `BV`, `VM`) and a **category** (`AB`, `ZU`, `KB`, `VN`, `EB`). Everything the dashboards show is derived from filtering and aggregating these movement rows — see [Business logic explained](#8-business-logic-explained).
+The core data model is the **SAP material ledger**: every row is a stock _movement_ classified by an **object type** (`CA`, `BV`, `VM`) and a **category** (`AB`, `ZU`, `KB`, `VN`, `EB`). Everything the dashboards show is derived from filtering and aggregating these movement rows — see [Business logic explained](#8-business-logic-explained).
 
 ---
 
 ## 2. Tech stack
 
-| Layer | Technology |
-|---|---|
-| **Frontend** | React 19, TypeScript 6, Vite 8, Tailwind CSS 4, Radix UI, TanStack React Query 5, React Router 7, Leaflet / React-Leaflet, Axios, Lucide icons, oxlint |
-| **Backend** | Python 3.10+, FastAPI, Pydantic v2 / pydantic-settings, Pandas, APScheduler, structlog |
-| **Database** | PostgreSQL (async via SQLAlchemy 2 + asyncpg), Alembic migrations |
-| **Auth** | JWT (python-jose) in httpOnly cookies, bcrypt password hashing (passlib) |
-| **Integrations** | Microsoft Graph / SharePoint via MSAL + httpx |
-| **Deployment** | Vercel (frontend) + Render (backend, Docker); Docker Compose for local |
+| Layer            | Technology                                                                                                                                             |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Frontend**     | React 19, TypeScript 6, Vite 8, Tailwind CSS 4, Radix UI, TanStack React Query 5, React Router 7, Leaflet / React-Leaflet, Axios, Lucide icons, oxlint |
+| **Backend**      | Python 3.10+, FastAPI, Pydantic v2 / pydantic-settings, Pandas, APScheduler, structlog                                                                 |
+| **Database**     | PostgreSQL (async via SQLAlchemy 2 + asyncpg), Alembic migrations                                                                                      |
+| **Auth**         | JWT (python-jose) in httpOnly cookies, bcrypt password hashing (passlib)                                                                               |
+| **Integrations** | Microsoft Graph / SharePoint via MSAL + httpx                                                                                                          |
+| **Deployment**   | Vercel (frontend) + Render (backend, Docker); Docker Compose for local                                                                                 |
 
 Two distinct data stores are used deliberately:
 
-- **CSV cache (in-memory Pandas):** the *analytics* data — the material ledger and plant master. Read-heavy, rebuilt on a schedule. Never written to by users.
-- **PostgreSQL:** the *operational* data — users, plant/material admin edits, brand groups, thresholds, uploaded datasets, SharePoint config. Written to via the admin/settings APIs.
+- **CSV cache (in-memory Pandas):** the _analytics_ data — the material ledger and plant master. Read-heavy, rebuilt on a schedule. Never written to by users.
+- **PostgreSQL:** the _operational_ data — users, plant/material admin edits, brand groups, thresholds, uploaded datasets, SharePoint config. Written to via the admin/settings APIs.
 
 ---
 
@@ -94,7 +94,7 @@ flowchart TB
     UI -->|"axios GET/POST"| API
 ```
 
-**Key idea:** routes are *thin* (parse request, call a service, wrap the result). Services hold the *business logic*. Repositories are the *only* things that touch a data source (a Pandas frame or a DB table). This keeps the layers swappable and testable.
+**Key idea:** routes are _thin_ (parse request, call a service, wrap the result). Services hold the _business logic_. Repositories are the _only_ things that touch a data source (a Pandas frame or a DB table). This keeps the layers swappable and testable.
 
 ---
 
@@ -218,16 +218,16 @@ This is the heart of the analytics data layer. `CsvCache` is a **singleton** (`c
 
 - **Why cache?** Parsing a 5,000-row CSV on every request would be slow. Instead the file is parsed once at startup and reloaded every 15 minutes in the background; requests are served from memory in microseconds.
 - **Thread safety.** The scheduler runs in a background thread while requests run in the async loop. Every read/write takes a re-entrant lock (`RLock`) so a request can never observe a half-written frame.
-- **`.get(key)` returns a *copy*** so callers can filter/mutate freely without corrupting the shared frame.
+- **`.get(key)` returns a _copy_** so callers can filter/mutate freely without corrupting the shared frame.
 - **Pinning.** When an admin uploads a dataset, `pin_dataframe()` swaps it in and marks the key "pinned" so the scheduler's disk reload can't clobber it. `unpin()` reverts to the bundled file.
 - **Validation.** `REQUIRED_COLUMNS` rejects a malformed export at load time (keeping the previous good data live) rather than silently rendering empty dashboards.
 
 `CSV_FILES` maps the two logical datasets to their filenames:
 
-| Logical key | File | Purpose |
-|---|---|---|
-| `material_ledger` | `June inventory(Data).csv` | SAP movement rows (the analytics data) |
-| `plant_names` | `plant_names.csv` | Plant master: names, cities, GPS coordinates |
+| Logical key       | File                       | Purpose                                      |
+| ----------------- | -------------------------- | -------------------------------------------- |
+| `material_ledger` | `June inventory(Data).csv` | SAP movement rows (the analytics data)       |
+| `plant_names`     | `plant_names.csv`          | Plant master: names, cities, GPS coordinates |
 
 ### 5.3 The scheduler — `core/scheduler.py`
 
@@ -246,7 +246,7 @@ An APScheduler `BackgroundScheduler` fires `csv_cache.load_all()` every `CSV_REF
 
 ### 5.5 Repositories
 
-- `repositories/csv/material_ledger_csv_repo.py` — `get_movements(...)` reads the cached frame, renames columns via `COLUMN_MAP`, and returns filtered `MaterialMovement` dataclasses. This is the *only* place that understands the raw CSV shape.
+- `repositories/csv/material_ledger_csv_repo.py` — `get_movements(...)` reads the cached frame, renames columns via `COLUMN_MAP`, and returns filtered `MaterialMovement` dataclasses. This is the _only_ place that understands the raw CSV shape.
 - `repositories/db/*` — thin async SQLAlchemy repos: `user_repo`, `plant_repo`, `threshold_repo`, `settings_repo`. Each exposes small query/upsert functions used by services and routes.
 
 ### 5.6 Services
@@ -352,17 +352,23 @@ sequenceDiagram
 Every response is wrapped in the same envelope:
 
 ```json
-{ "success": true, "data": { /* ... */ }, "meta": { "timestamp": "…Z" } }
+{
+  "success": true,
+  "data": {
+    /* ... */
+  },
+  "meta": { "timestamp": "…Z" }
+}
 ```
 
 ### API surface (all under `/api/v1`)
 
-| Group | Endpoints |
-|---|---|
-| **Health** | `GET /health` · `GET /status` |
-| **Material ledger** | `GET /material-ledger/kpis` · `/inventory-summary` · `/inventory-alerts` · `/stock-transfers` · `/inventory-report` · `/location-summary` · `/materials` · `/brand-groups` · `/plants` |
-| **Settings** | `GET /settings/csv-config` · `POST /settings/ingestion/trigger` · `GET/POST /settings/thresholds` |
-| **Auth** | `POST /auth/login` · `POST /auth/logout` · `POST /auth/refresh` · `GET /auth/me` |
+| Group                  | Endpoints                                                                                                                                                                               |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Health**             | `GET /health` · `GET /status`                                                                                                                                                           |
+| **Material ledger**    | `GET /material-ledger/kpis` · `/inventory-summary` · `/inventory-alerts` · `/stock-transfers` · `/inventory-report` · `/location-summary` · `/materials` · `/brand-groups` · `/plants`  |
+| **Settings**           | `GET /settings/csv-config` · `POST /settings/ingestion/trigger` · `GET/POST /settings/thresholds`                                                                                       |
+| **Auth**               | `POST /auth/login` · `POST /auth/logout` · `POST /auth/refresh` · `GET /auth/me`                                                                                                        |
 | **Admin** (admin only) | CRUD under `/admin/plants`, `/admin/materials` (+ `/materials/sync`), `/admin/brand-groups`, `/admin/datasets` (+ activate/delete), `/admin/users`, and `/admin/sharepoint` (+ `/test`) |
 
 Interactive docs are always available at **`/docs`** (Swagger) and **`/redoc`**.
@@ -375,33 +381,33 @@ Interactive docs are always available at **`/docs`** (Swagger) and **`/redoc`**.
 
 Every ledger row is a stock movement described by two codes:
 
-**Object type** (`Obj Type`) — *what kind of record it is:*
+**Object type** (`Obj Type`) — _what kind of record it is:_
 
-| Code | Meaning |
-|---|---|
-| `CA` | Stock account (accounting/closing balance rows) |
-| `BV` | Goods movement (physical stock) |
+| Code | Meaning                                                              |
+| ---- | -------------------------------------------------------------------- |
+| `CA` | Stock account (accounting/closing balance rows)                      |
+| `BV` | Goods movement (physical stock)                                      |
 | `VM` | Material valuation (carries source→destination detail for transfers) |
 
-**Category** — *what the movement represents:*
+**Category** — _what the movement represents:_
 
-| Code | Name | Role |
-|---|---|---|
-| `AB` | Beginning inventory | opening balance |
-| `ZU` | Receipts | inflow (production + transfers) |
-| `KB` | Cumulative inventory | running total (AB + ZU) |
-| `VN` | Consumption | outflow (sales + internal use) |
-| `EB` | Ending inventory | closing balance |
+| Code | Name                 | Role                            |
+| ---- | -------------------- | ------------------------------- |
+| `AB` | Beginning inventory  | opening balance                 |
+| `ZU` | Receipts             | inflow (production + transfers) |
+| `KB` | Cumulative inventory | running total (AB + ZU)         |
+| `VN` | Consumption          | outflow (sales + internal use)  |
+| `EB` | Ending inventory     | closing balance                 |
 
-> ⚠️ **Avoid triple-counting.** `CA`, `BV`, and `VM` rows can each carry the same physical quantity for one event. Aggregations pick the *specific* obj-type/category combination they need (e.g. closing stock = `CA` + `EB` only) rather than summing across all obj types.
+> ⚠️ **Avoid triple-counting.** `CA`, `BV`, and `VM` rows can each carry the same physical quantity for one event. Aggregations pick the _specific_ obj-type/category combination they need (e.g. closing stock = `CA` + `EB` only) rather than summing across all obj types.
 
 ### 8.2 Inventory report (Stock Sheet)
 
 `get_inventory_report()` builds, per material and per plant:
 
 - **On hand** = sum of `CA`/`EB` closing-stock rows.
-- **Transit OUT** = `BV`/`VN` "Stock Transfer" rows at *factory* plants (dispatched, not yet arrived).
-- **Transit IN** = `BV`/`ZU` "Stock Transfer" rows at *depot* plants (arriving).
+- **Transit OUT** = `BV`/`VN` "Stock Transfer" rows at _factory_ plants (dispatched, not yet arrived).
+- **Transit IN** = `BV`/`ZU` "Stock Transfer" rows at _depot_ plants (arriving).
 - **Without transit** = on-hand + transit-in − transit-out (adjusted position).
 
 Factory plants are detected dynamically (plants with `ZU` + "Production" rows), so nothing is hard-coded.
@@ -418,7 +424,7 @@ The Stock Sheet UI (`features/report/ReportPage.tsx`) offers two transposes of t
 
 ### 8.5 Units — MT vs Bags
 
-All quantities are stored and computed in **metric tonnes (MT)**. The frontend can display per-material **bag counts** using a `bagsPerMt` factor from `useSettingsStore`. Because different materials have different bag sizes, plant-level *totals* that mix materials are always shown in MT (summing bag counts across materials isn't physically meaningful), while individual per-material cells respect the MT/Bags toggle.
+All quantities are stored and computed in **metric tonnes (MT)**. The frontend can display per-material **bag counts** using a `bagsPerMt` factor from `useSettingsStore`. Because different materials have different bag sizes, plant-level _totals_ that mix materials are always shown in MT (summing bag counts across materials isn't physically meaningful), while individual per-material cells respect the MT/Bags toggle.
 
 ---
 
@@ -554,6 +560,7 @@ alembic downgrade -1                        # roll back one
 ORM models live in `backend/db/models/`: `user`, `plant`, `material`, `material_threshold`, `brand_group`, `csv_dataset`, `sharepoint_config`.
 
 On container start, `start.sh` runs (best-effort, never blocking the API):
+
 1. `alembic upgrade head` — apply migrations.
 2. `bootstrap_admin.py` — ensure the admin user exists.
 3. `seed_reference.py` — populate plants + materials from the CSV (inserts only missing rows; never overwrites admin edits).
@@ -564,7 +571,7 @@ On container start, `start.sh` runs (best-effort, never blocking the API):
 
 ## 13. SharePoint integration setup
 
-**Current status (be aware):** the SharePoint feature today lets an admin **store** a connection config and **test** it against Microsoft Graph. The scheduled *auto-pull* of the file into the CSV cache is **not yet wired** — `SharePointService.get_file_bytes()` exists but is not called by the scheduler. So configuring SharePoint validates credentials and saves them; it does not yet replace the bundled CSV automatically. (For live data today, use the Admin **CSV upload** feature instead.)
+**Current status (be aware):** the SharePoint feature today lets an admin **store** a connection config and **test** it against Microsoft Graph. The scheduled _auto-pull_ of the file into the CSV cache is **not yet wired** — `SharePointService.get_file_bytes()` exists but is not called by the scheduler. So configuring SharePoint validates credentials and saves them; it does not yet replace the bundled CSV automatically. (For live data today, use the Admin **CSV upload** feature instead.)
 
 Setting it up still requires a proper Azure AD app registration, documented here for when the sync is completed.
 
@@ -668,6 +675,7 @@ Frontend quality gates: `npm run build` (includes `tsc -b` type-check) and `npm 
 ### Handle an SAP export change
 
 Edit **only** `backend/core/material_ledger_config.py`:
+
 - Column renamed → change its value in `COLUMN_MAP`.
 - New column → add a key:value pair (flows through as extra fields).
 - New category code → add a row to `CATEGORY_CONFIG`.
@@ -681,16 +689,17 @@ Create the ORM model in `backend/db/models/`, import it in `alembic/env.py`, the
 
 ## 17. Operational notes & troubleshooting
 
-| Symptom | Likely cause / fix |
-|---|---|
-| Dashboards empty, `/status` shows an error | CSV missing a `REQUIRED_COLUMNS` field, or wrong `CSV_BASE_PATH`. Check the error string in `GET /api/v1/status`. |
-| Backend refuses to start in prod | Placeholder `SECRET_KEY` with `COOKIE_SECURE=true`. Set a real key (`openssl rand -hex 32`). |
-| Logged out on every page load | Cross-site cookies not configured — set `COOKIE_SAMESITE=none` + `COOKIE_SECURE=true`, and `ALLOWED_ORIGINS_STR` to the exact frontend origin. |
-| Admin data reset after ~30 days | Render free Postgres was wiped; baseline auto-rebuilds, manual edits are lost. Move to Neon/Supabase to avoid. |
-| Uploaded dataset disappears after restart | It shouldn't — it's re-pinned from the DB on startup. Confirm `DATABASE_URL` is set and the `csv_datasets` row is `is_active=true`. |
-| First request after idle is slow | Render free-tier cold start (~50s); the 14-min keep-alive ping and 60s axios timeout mitigate it. |
-| CORS errors in the browser | Add the frontend origin to `ALLOWED_ORIGINS_STR` (comma-separated, exact scheme+host+port). |
+| Symptom                                    | Likely cause / fix                                                                                                                             |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Dashboards empty, `/status` shows an error | CSV missing a `REQUIRED_COLUMNS` field, or wrong `CSV_BASE_PATH`. Check the error string in `GET /api/v1/status`.                              |
+| Backend refuses to start in prod           | Placeholder `SECRET_KEY` with `COOKIE_SECURE=true`. Set a real key (`openssl rand -hex 32`).                                                   |
+| Logged out on every page load              | Cross-site cookies not configured — set `COOKIE_SAMESITE=none` + `COOKIE_SECURE=true`, and `ALLOWED_ORIGINS_STR` to the exact frontend origin. |
+| Admin data reset after ~30 days            | Render free Postgres was wiped; baseline auto-rebuilds, manual edits are lost. Move to Neon/Supabase to avoid.                                 |
+| Uploaded dataset disappears after restart  | It shouldn't — it's re-pinned from the DB on startup. Confirm `DATABASE_URL` is set and the `csv_datasets` row is `is_active=true`.            |
+| First request after idle is slow           | Render free-tier cold start (~50s); the 14-min keep-alive ping and 60s axios timeout mitigate it.                                              |
+| CORS errors in the browser                 | Add the frontend origin to `ALLOWED_ORIGINS_STR` (comma-separated, exact scheme+host+port).                                                    |
 
 ---
 
-*Built for INSEE Cement — SAP material-ledger analytics. Data is derived entirely from the movement-row model described in [§8](#8-business-logic-explained); when in doubt about a number, trace it back through the service that computes it.*
+_Built for INSEE Cement — SAP material-ledger analytics. Data is derived entirely from the movement-row model described in [§8](#8-business-logic-explained); when in doubt about a number, trace it back through the service that computes it._
+....
